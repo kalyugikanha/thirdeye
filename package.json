@@ -1,0 +1,12 @@
+{
+    "private":  true,
+    "workspaces":  [
+                       "apps/*",
+                       "packages/*"
+                   ],
+    "name":  "thirdeye-monorepo",
+    "scripts":  {
+                    "dev":  "npm run dev --workspaces",
+                    "build":  "npm run build --workspaces"
+                }
+}
