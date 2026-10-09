@@ -1,7 +1,7 @@
-# BRIEFING — 2026-09-30T09:12:00Z
+# BRIEFING — 2026-09-30T17:28:00Z
 
 ## Mission
-Investigate tracking snippet (public/te.js), rrweb integration, DOM mutation/mouse/scroll capture, strict privacy masking, 5-second JSON batching, and verification methods.
+Investigate API & AI Insights layer: FastAPI routers, endpoints, dependency injection (tenant context, DB session), configuration, Gemini API integration (libraries, environment variables), Text-to-SQL architecture with safe execution, and verification strategy (test_ai.py).
 
 ## 🔒 My Identity
 - Archetype: explorer
@@ -16,35 +16,34 @@ Investigate tracking snippet (public/te.js), rrweb integration, DOM mutation/mou
 - No modifications to application source code
 
 ## Current Parent
-- Conversation ID: c64e98df-902d-4971-a278-52a3d604839f
-- Updated: 2026-09-30T09:02:36Z
+- Conversation ID: 10b0d826-6a42-44b5-b156-82123aa75d44
+- Updated: 2026-09-30T17:28:00Z
 
 ## Investigation State
 - **Explored paths**:
-  - `d:/Project/Our Product/thirdeye/.agents/ORIGINAL_REQUEST.md`
-  - `apps/api/public/te.js`
-  - `apps/api/app/main.py`
-  - `apps/web/src/app/onboarding/page.tsx`
-  - `.agents/orchestrator_1/BRIEFING.md`
-  - `.agents/explorer_survey_1/handoff.md`
-  - `.agents/explorer_survey_3/handoff.md`
-  - Monorepo package structure & build configs
+  - `d:/Project/Our Product/thirdeye/.agents/ORIGINAL_REQUEST.md` (## 2026-09-30T17:16:46Z)
+  - `d:/Project/Our Product/thirdeye/.agents/explorer_survey_2/DISPATCH.md`
+  - `apps/api/app/main.py`, `apps/api/app/auth.py`, `apps/api/app/database.py`, `apps/api/app/models.py`
+  - `apps/api/requirements.txt`, `apps/api/venv/Lib/site-packages`
+  - `apps/web/src/app/page.tsx` (Dashboard search bar & AI Insights section)
+  - `test_recordings.py` (Architecture and testing harness)
 - **Key findings**:
-  - `public/te.js` is located at `apps/api/public/te.js` and mounted at `/public` by FastAPI (`apps/api/app/main.py:28`).
-  - No build tool currently builds `te.js`; it is served as static vanilla JavaScript.
-  - Three integration options identified for rrweb: Dynamic loader with CDN/local fallback (recommended), Pre-bundled standalone script, and Self-hosted static bundle.
-  - Privacy masking requires `maskAllInputs: true`, `maskInputFn: () => '***'`, `maskTextSelector: '*'`, `maskTextFn: (t) => t.trim() ? '***' : t`.
-  - Batching requires 5-second `setInterval` buffer splice, payload `{ session_id, api_key, duration, events }` sent to `POST /api/v1/recordings`, plus `beforeunload` beacon.
-  - Verification can use `node --check apps/api/public/te.js` and standard HTML test harness.
+  - Survey completed: comprehensive report written to `report.md` and 5-component handoff written to `handoff.md`.
+  - Endpoint path designed: `POST /api/v1/ai/query` (alias `/api/v1/ai/insights`).
+  - Strict 5-stage safe execution workflow detailed: prompt formulation with schema + tenant rules, deterministic SQL generation, multi-layer AST/regex validation, PostgreSQL read-only transaction execution (`SET TRANSACTION READ ONLY`), and plain-English insight synthesis.
+  - Multi-tenant isolation enforced via mandatory `:org_id` parameter binding.
+  - Dependency: Add `google-genai` to `apps/api/requirements.txt` with dual fallback to `google-generativeai` and deterministic mock mode.
+  - Programmatic verification test script `test_ai.py` outlined with comprehensive test cases.
 - **Unexplored areas**: None for survey scope.
 
 ## Key Decisions Made
-- Recommend dynamic loader architecture with local fallback for `te.js` to keep file lightweight while enabling zero external dependencies if needed.
-- Define exact backend contract matching Explorer 1's `POST /api/v1/recordings` specifications.
-- Provide full proposed code for `apps/api/public/te.js` in handoff.md.
+- Implement modular architecture: `app/api/ai.py` (router), `app/schemas/ai.py` (models), `app/services/ai_service.py` (Gemini & SQL service).
+- Implement multi-layer defense-in-depth: Python regex AST checks + PostgreSQL `SET TRANSACTION READ ONLY` + statement timeout + row count cap + mandatory `:org_id` binding.
+- Include deterministic mock mode for `test_ai.py` and local testing when `GEMINI_API_KEY` is not configured or in offline environments.
 
 ## Artifact Index
 - DISPATCH.md — incoming dispatch records
 - progress.md — progress tracking and liveness heartbeat
 - BRIEFING.md — persistent working memory
-- handoff.md — final comprehensive report
+- report.md — detailed findings report
+- handoff.md — final handoff report

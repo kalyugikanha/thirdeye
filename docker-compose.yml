@@ -3,40 +3,16 @@ version: '3.8'
 services:
   db:
     image: postgres:15-alpine
+    container_name: thirdeye_postgres
     environment:
       POSTGRES_USER: thirdeye
       POSTGRES_PASSWORD: thirdeye_password
       POSTGRES_DB: thirdeye_db
     ports:
-      - "5432:5432"
+      - '5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    restart: unless-stopped
-
-  api:
-    build: 
-      context: ./apps/api
-      dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./apps/api:/code
-    environment:
-      - DATABASE_URL=postgresql://thirdeye:thirdeye_password@db:5432/thirdeye_db
-      - REDIS_URL=redis://redis:6379/0
-    depends_on:
-      - db
-      - redis
-    restart: unless-stopped
-
 volumes:
   postgres_data:
-  redis_data:

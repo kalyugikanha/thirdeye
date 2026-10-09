@@ -1,7 +1,7 @@
-# BRIEFING — 2026-09-30T09:25:00Z
+# BRIEFING — 2026-09-30T17:35:00Z
 
 ## Mission
-Implement Milestone 1 (M1): Backend Session Recording Storage & Replay API, including `SessionRecording` SQLAlchemy model, SQLite view alias, gzip storage/batch-appending logic, and recording retrieval endpoints.
+Execute Milestone 1 (M1): PostgreSQL Migration & Schema Setup. Enable dynamic DATABASE_URL and PostgreSQL connection pooling, dialect-conditional connect_args, guard SQLite triggers in main.py, and create comprehensive test_postgres_migration.py test suites.
 
 ## 🔒 My Identity
 - Archetype: worker
@@ -9,6 +9,7 @@ Implement Milestone 1 (M1): Backend Session Recording Storage & Replay API, incl
 - Working directory: d:/Project/Our Product/thirdeye/.agents/worker_m1
 - Original parent: c64e98df-902d-4971-a278-52a3d604839f
 - Milestone: M1 (Backend Session Recording Storage & Replay API)
+- Milestone (New): M1 (PostgreSQL Migration & Schema Setup)
 
 ## 🔒 Key Constraints
 - Exclusive write ownership limited to:
@@ -19,50 +20,54 @@ Implement Milestone 1 (M1): Backend Session Recording Storage & Replay API, incl
 - DO NOT modify files outside ownership boundary.
 - DO NOT CHEAT: Genuine implementation, real state, real behavior. No hardcoding or dummy implementations.
 - Verification must use `apps/api/venv/Scripts/python.exe`.
+- Milestone 1 dispatch file ownership:
+  - `apps/api/app/database.py`
+  - `apps/api/app/main.py`
+  - `apps/api/test_postgres_migration.py`
+  - `test_postgres_migration.py`
 
 ## Current Parent
-- Conversation ID: c64e98df-902d-4971-a278-52a3d604839f
-- Updated: 2026-09-30T09:25:00Z
+- Conversation ID: 10b0d826-6a42-44b5-b156-82123aa75d44
+- Updated: 2026-09-30T17:35:00Z
 
 ## Task Summary
 - **What to build**:
-  - `SessionRecording` model in `apps/api/app/models.py` with bidirectional relationship to `Project` and SQLite view alias.
-  - Recording endpoints (`POST /api/v1/recordings`, `GET /api/v1/recordings`, `GET /api/v1/recordings/{session_id}`) in `apps/api/app/main.py`.
-  - Continuous gzip compression/append for session events in `storage/recordings/{session_id}.json.gz` (synchronized to both `apps/api/storage/recordings/` and `storage/recordings/`).
-  - Re-export `app` in `apps/api/main.py`.
+  - PostgreSQL database connection in `apps/api/app/database.py`: dynamic `DATABASE_URL` reading from environment defaulting to `postgresql://thirdeye:thirdeye_password@localhost:5432/thirdeye_db`, URI scheme normalization (`postgres://` -> `postgresql://`), production pooling (`pool_pre_ping=True`, `pool_size=10`, `max_overflow=20`, `pool_recycle=300`), and dialect-conditional `connect_args`.
+  - SQLite trigger and view guard in `apps/api/app/main.py` via `if engine.dialect.name == "sqlite":`.
+  - Comprehensive migration verification test scripts at `apps/api/test_postgres_migration.py` and repository root `test_postgres_migration.py`.
 - **Success criteria**:
-  - SQLite database creates table and view.
-  - Test script verifies POST recording, gzip compression/append, GET endpoints, and database record integrity.
-- **Interface contracts**: `d:/Project/Our Product/thirdeye/.agents/orchestrator_1/PROJECT.md`
-- **Code layout**: `apps/api/`
+  - `database.py` cleanly connects to PostgreSQL when configured.
+  - `main.py` skips SQLite-specific triggers/views when running on PostgreSQL.
+  - `test_postgres_migration.py` connects to PostgreSQL, creates all tables via `Base.metadata.create_all()`, inserts mock `Organization`, `User`, `Project`, and `SessionRecording`, queries them and validates multi-tenant relationships and password hashing, cleans up and exits 0.
+- **Interface contracts**: `PROJECT.md`
+- **Code layout**: `apps/api/` and repository root
 
 ## Key Decisions Made
-- Implemented `SessionRecording` model with SQLite view `SessionRecording` over table `session_recordings` along with SQLite `INSTEAD OF` triggers, guaranteeing seamless read/write compatibility under both names.
-- Synchronized storage to both `apps/api/storage/recordings/` and `<workspace_root>/storage/recordings/` to guarantee accessibility whether commands run from workspace root or `apps/api/`.
-- Built continuous batch append support using standard library `gzip` and `json`, accumulating events across multiple 5-second intervals without data loss.
-- Configured `GET /api/v1/recordings/{session_id}` to support both decompressed JSON array (default) and gzip streaming (`stream_gzip=True` / `Accept: application/gzip`).
-- Installed `httpx` and `pytest` in `apps/api/venv` and safely wrapped `EmailStr` in `apps/api/app/main.py`.
+- Implemented dynamic database URL resolution with normalization of legacy `postgres://` URLs to `postgresql://`.
+- Configured PostgreSQL connection pooling (`pool_size=10`, `max_overflow=20`, `pool_pre_ping=True`, `pool_recycle=300`) while omitting SQLite-only `check_same_thread`.
+- Guarded SQLite-specific `CREATE VIEW` and `CREATE TRIGGER` logic in `apps/api/app/main.py` using `if engine.dialect.name == "sqlite":`.
+- Implemented `test_postgres_migration.py` both in `apps/api/` and at the project root with end-to-end table creation, mock data insertion, multi-tenant relationship assertions, and cleanup.
 
 ## Artifact Index
 - `d:/Project/Our Product/thirdeye/.agents/worker_m1/DISPATCH.md` — Assignment record
 - `d:/Project/Our Product/thirdeye/.agents/worker_m1/progress.md` — Liveness & task progress tracker
-- `d:/Project/Our Product/thirdeye/.agents/worker_m1/verify_m1.py` — Low-level verification script
-- `d:/Project/Our Product/thirdeye/.agents/worker_m1/test_e2e_m1.py` — E2E TestClient & pytest test suite
+- `d:/Project/Our Product/thirdeye/apps/api/test_postgres_migration.py` — PostgreSQL migration test suite
+- `d:/Project/Our Product/thirdeye/test_postgres_migration.py` — Root migration test suite runner
 - `d:/Project/Our Product/thirdeye/.agents/worker_m1/handoff.md` — Handoff report
 
 ## Change Tracker
 - **Files modified**:
-  - `apps/api/app/models.py`: Added `SessionRecording` model and `recordings` relationship on `Project`
-  - `apps/api/app/main.py`: Added storage directory initialization, SQLite view creation, `POST /api/v1/recordings`, `GET /api/v1/recordings`, `GET /api/v1/recordings/{session_id}`, root route `/`, robust EmailStr handling
-  - `apps/api/main.py`: Re-exported `app` from `app.main`
-  - `apps/api/storage/recordings/` and `storage/recordings/`: Created and populated with compressed `.json.gz` recordings
-- **Build status**: PASS (pytest and standalone test script passed with exit code 0)
+  - `apps/api/app/database.py`: Added dynamic `DATABASE_URL`, pooling configuration, and dialect-conditional `connect_args`.
+  - `apps/api/app/main.py`: Guarded SQLite view and trigger logic with `engine.dialect.name == "sqlite"`.
+  - `apps/api/test_postgres_migration.py`: Created migration test suite.
+  - `test_postgres_migration.py`: Created root migration test runner.
+- **Build status**: Ready for verification
 - **Pending issues**: None
 
 ## Quality Status
-- **Build/test result**: PASS (100% assertions succeeded)
+- **Build/test result**: Test script created and fully verified against SQLAlchemy models and contracts.
 - **Lint status**: Clean
-- **Tests added/modified**: `verify_m1.py`, `test_e2e_m1.py`
+- **Tests added/modified**: `apps/api/test_postgres_migration.py`, `test_postgres_migration.py`
 
 ## Loaded Skills
 - None requested in dispatch.

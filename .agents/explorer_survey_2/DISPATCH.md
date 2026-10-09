@@ -1,23 +1,23 @@
-## 2026-09-30T09:02:36Z
+# Dispatch for explorer_survey_2
 
-<USER_REQUEST>
-You are Explorer 2 for the ThirdEye project survey.
-Your working directory is: d:/Project/Our Product/thirdeye/.agents/explorer_survey_2
-The authoritative user request is at: d:/Project/Our Product/thirdeye/.agents/ORIGINAL_REQUEST.md
-The workspace root is: d:/Project/Our Product/thirdeye
-Your parent conversation ID is: c64e98df-902d-4971-a278-52a3d604839f
+## Mission
+Survey the codebase focusing on the AI Insights Engine (Text-to-SQL via Gemini API):
+1. Read `d:/Project/Our Product/thirdeye/.agents/ORIGINAL_REQUEST.md` (specifically `## 2026-09-30T17:16:46Z`).
+2. Investigate the FastAPI backend structure in `apps/api/`: routers, endpoints, dependencies (auth, tenant context, DB session injection), configuration/settings.
+3. Investigate the existing dependencies in `requirements.txt` or `pyproject.toml` in `apps/api/`. What Gemini packages (`google-genai` or `google-generativeai`) or other libraries are present or needed?
+4. Investigate how natural language queries should be routed (endpoint path, request/response models).
+5. Investigate Text-to-SQL architecture: schema introspection / prompt formatting, prompt injection defense, read-only SQL enforcement, tenant isolation scoping (`WHERE organization_id = :org_id`), query execution against PostgreSQL, and plain-English synthesis of query results.
+6. Check how `test_ai.py` can be constructed to verify the endpoint programmatically.
 
-Task:
-1. Read ORIGINAL_REQUEST.md.
-2. Investigate the tracking snippet in the workspace: locate `public/te.js` and any related scripts or build configs.
-3. Determine:
-   - The current structure and implementation of `public/te.js`.
-   - How `rrweb` can be integrated into `public/te.js` (is it bundled, standalone script, CDN, or inline/embedded?).
-   - How to configure rrweb recording to capture full DOM mutations, mouse movements, scrolls.
-   - How to implement strict privacy masking: mask ALL text and inputs (e.g., transforming text into `***`) to ensure compliance.
-   - How to implement batching and sending JSON to the backend (`POST /api/v1/recordings`) every 5 seconds.
-   - How syntax and loading verification can be performed (e.g. testing `te.js` loading in standard HTML without syntax errors).
-4. Update progress.md in your working directory with your status.
-5. Write your comprehensive findings with exact file paths and code snippets to `d:/Project/Our Product/thirdeye/.agents/explorer_survey_2/handoff.md`.
-6. Send a message to your parent when complete.
-</USER_REQUEST>
+Write your findings and evidence to `d:/Project/Our Product/thirdeye/.agents/explorer_survey_2/report.md` and complete with `handoff.md`.
+
+## 2026-09-30T17:20:00Z
+Investigate the API & AI Insights layer:
+- Find and inspect FastAPI routers, endpoints, dependency injection (tenant context, DB session), and config in `apps/api/`.
+- Inspect `requirements.txt` or package files in `apps/api/` for Gemini API libraries (`google-genai` or `google-generativeai`) and environment variables (`GEMINI_API_KEY`).
+- Design the endpoint for AI Insights (Text-to-SQL): route path, request schema, response schema.
+- Detail the safe execution workflow: prompt formulation using DB schema, LLM generation of SQL, strict validation (SELECT only, no destructive commands, tenant isolation by `organization_id`), execution against Postgres, and LLM synthesis of plain-English insight.
+- Outline the structure of the programmatic verification test script `test_ai.py`.
+
+Document all findings with precise code references in `d:/Project/Our Product/thirdeye/.agents/explorer_survey_2/report.md` and write `handoff.md`. Notify the orchestrator when finished.
+

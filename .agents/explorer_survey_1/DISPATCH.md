@@ -1,23 +1,29 @@
-## 2026-09-30T09:02:35Z
+# Dispatch for explorer_survey_1
 
-<USER_REQUEST>
-You are Explorer 1 for the ThirdEye project survey.
+## Mission
+Survey the codebase focusing on the database layer for PostgreSQL Migration:
+1. Read `d:/Project/Our Product/thirdeye/.agents/ORIGINAL_REQUEST.md` (specifically `## 2026-09-30T17:16:46Z`).
+2. Investigate `database.py` and all SQLAlchemy models across `apps/api/` (look in `apps/api/models/`, `apps/api/db/`, etc.).
+3. Identify all models, table schemas, column types, primary keys, foreign keys, relationships, and how `organization_id` multi-tenancy is structured.
+4. Identify any SQLite-specific code (such as SQLite PRAGMAs, sqlite:/// URLs, JSON or datetime idiosyncrasies) and determine exact changes needed for PostgreSQL (e.g., PostgreSQL URL, psycopg2/asyncpg driver, engine configuration, pool settings).
+5. Document what is required to execute `Base.metadata.create_all()` against PostgreSQL cleanly, and what is required to insert/query mock `Organization` and `User` records.
+
+Write your findings and evidence to `d:/Project/Our Product/thirdeye/.agents/explorer_survey_1/report.md` and complete with `handoff.md`.
+
+## 2026-09-30T17:20:20Z
+User Request:
+You are explorer_survey_1.
 Your working directory is: d:/Project/Our Product/thirdeye/.agents/explorer_survey_1
-The authoritative user request is at: d:/Project/Our Product/thirdeye/.agents/ORIGINAL_REQUEST.md
-The workspace root is: d:/Project/Our Product/thirdeye
-Your parent conversation ID is: c64e98df-902d-4971-a278-52a3d604839f
 
-Task:
-1. Read ORIGINAL_REQUEST.md.
-2. Investigate the backend structure in the workspace. Locate the FastAPI application, routes, models, database configuration (SQLite), and storage directories.
-3. Determine:
-   - Where and how API endpoints are defined and mounted.
-   - The existing SQLite models (e.g., Session, Project, Event, etc.) and where the new `SessionRecording` table/model should be placed.
-   - The required fields for `SessionRecording` (session_id, project_id, duration, local file path, created_at, etc.).
-   - The mock S3 storage requirements: saving gzip-compressed JSON payloads to `storage/recordings/` directory.
-   - How the endpoint `POST /api/v1/recordings` should receive, validate, compress, and store payloads, and record the metadata in SQLite.
-   - How Python tests are currently run or can be run in this workspace (Python environment, pytest, dependencies).
-4. Update progress.md in your working directory with your status.
-5. Write your comprehensive findings with exact file paths and code snippets to `d:/Project/Our Product/thirdeye/.agents/explorer_survey_1/handoff.md`.
-6. Send a message to your parent when complete.
-</USER_REQUEST>
+Follow the instructions in:
+1. d:/Project/Our Product/thirdeye/.agents/ORIGINAL_REQUEST.md (specifically ## 2026-09-30T17:16:46Z)
+2. d:/Project/Our Product/thirdeye/.agents/explorer_survey_1/DISPATCH.md
+
+Investigate the database layer:
+- Find and inspect `database.py` and all models in `apps/api/` (look in `apps/api/models/`, `apps/api/db/`, etc.).
+- Identify all SQLAlchemy tables, schemas, relationships, constraints, and `organization_id` multi-tenancy implementation.
+- Identify what needs to change to transition from SQLite to PostgreSQL (connection string, engine options, pool config, type adaptations if any).
+- Determine how `Base.metadata.create_all()` behaves on Postgres and how mock Organization and User records should be inserted and retrieved.
+
+Document all findings with precise code references in `d:/Project/Our Product/thirdeye/.agents/explorer_survey_1/report.md` and write `handoff.md`. Notify the orchestrator when finished.
+

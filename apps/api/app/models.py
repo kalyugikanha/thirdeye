@@ -71,4 +71,72 @@ class SessionRecording(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship('Project', back_populates='recordings')
+
 
+class UptimeMonitor(Base):
+    __tablename__ = 'uptime_monitors'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'))
+    name = Column(String)
+    url = Column(String)
+    status = Column(String, default='pending')
+    last_checked = Column(DateTime, nullable=True)
+    response_time_ms = Column(Integer, nullable=True)
+    error_message = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    project = relationship('Project')
+
+class Notification(Base):
+    __tablename__ = 'notifications'
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey('organizations.id'))
+    title = Column(String)
+    message = Column(String)
+    type = Column(String, default='info')
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AlertChannel(Base):
+    __tablename__ = 'alert_channels'
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey('organizations.id'))
+    name = Column(String)
+    type = Column(String, default='webhook')
+    config = Column(JSON, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class OrganizationInvite(Base):
+    __tablename__ = 'organization_invites'
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey('organizations.id'))
+    email = Column(String, index=True)
+    role = Column(String, default='MEMBER')
+    token = Column(String, unique=True, index=True)
+    is_accepted = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Funnel(Base):
+    __tablename__ = 'funnels'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'))
+    name = Column(String)
+    steps_json = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship('Project')
+
+
+class SyntheticMonitor(Base):
+    __tablename__ = 'synthetic_monitors'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'))
+    name = Column(String)
+    steps_json = Column(JSON)
+    status = Column(String, default='pending')
+    last_run = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship('Project')

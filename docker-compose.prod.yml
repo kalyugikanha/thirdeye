@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL Production Database
+  db:
+    image: postgres:15-alpine
+    container_name: thirdeye_prod_db
+    environment:
+      POSTGRES_USER: thirdeye
+      POSTGRES_PASSWORD: thirdeye_secure_prod_password
+      POSTGRES_DB: thirdeye_prod
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U thirdeye -d thirdeye_prod"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. FastAPI Backend Engine
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: thirdeye_prod_api
+    environment:
+      - DATABASE_URL=postgresql://thirdeye:thirdeye_secure_prod_password@db:5432/thirdeye_prod
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./apps/api/storage/recordings:/app/storage/recordings
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always
+
+  # 3. Next.js Web Frontend
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: thirdeye_prod_web
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: always
+
+volumes:
+  postgres_prod_data:
