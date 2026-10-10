@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { LayoutGrid, Save, Activity, Flame, ShieldCheck, CheckCircle2, TrendingUp, Sparkles, RefreshCw } from 'lucide-react';
 import Sidebar from '@/components/Sidebar';
+import { apiUrl } from '@/lib/api';
 
 const AVAILABLE_WIDGETS = [
   { id: 'uptime_summary', name: 'API Uptime Summary', icon: Activity, desc: '99.98% platform health indicator' },
@@ -22,7 +23,7 @@ export default function CustomDashboardPage() {
   useEffect(() => {
     const token = localStorage.getItem('te_token');
     if (!token) return router.push('/login');
-    fetch('http://localhost:8000/api/v1/user/dashboard-layout', {
+    fetch(apiUrl('/api/v1/user/dashboard-layout'), {
       headers: { 'Authorization': `Bearer ${token}` }
     })
       .then(res => res.json())
@@ -44,7 +45,7 @@ export default function CustomDashboardPage() {
     setSaving(true);
     const token = localStorage.getItem('te_token');
     try {
-      await fetch('http://localhost:8000/api/v1/user/dashboard-layout', {
+      await fetch(apiUrl('/api/v1/user/dashboard-layout'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -1,6 +1,7 @@
 "use client";
 
 import Sidebar from '@/components/Sidebar';
+import { apiUrl } from '@/lib/api';
 
 
 import { useState, useEffect } from 'react';
@@ -35,7 +36,7 @@ export default function UptimePage() {
       return;
     }
     try {
-      const projRes = await fetch('http://localhost:8000/api/projects', {
+      const projRes = await fetch(apiUrl('/api/projects'), {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (projRes.status === 401) {
@@ -46,7 +47,7 @@ export default function UptimePage() {
       const projects = await projRes.json();
       if (projects.length > 0) setProjectId(projects[0].id);
 
-      const res = await fetch('http://localhost:8000/api/v1/monitors', {
+      const res = await fetch(apiUrl('/api/v1/monitors'), {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
@@ -70,7 +71,7 @@ export default function UptimePage() {
     setAdding(true);
     const token = localStorage.getItem('te_token');
     try {
-      const res = await fetch('http://localhost:8000/api/v1/monitors', {
+      const res = await fetch(apiUrl('/api/v1/monitors'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -94,7 +95,7 @@ export default function UptimePage() {
     setChecking(id);
     const token = localStorage.getItem('te_token');
     try {
-      await fetch(`http://localhost:8000/api/v1/monitors/${id}/check`, {
+      await fetch(apiUrl(`/api/v1/monitors/${id}/check`), {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });

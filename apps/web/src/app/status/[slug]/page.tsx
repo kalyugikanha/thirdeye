@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { CheckCircle2, AlertTriangle, XCircle, Activity, ShieldCheck, Clock, RefreshCw } from 'lucide-react';
+import { apiUrl } from '@/lib/api';
 
 interface Monitor {
   id: number;
@@ -36,7 +37,7 @@ export default function PublicStatusPage() {
 
   const fetchStatus = async () => {
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/public/status/${slug}`);
+      const res = await fetch(apiUrl(`/api/v1/public/status/${slug}`));
       const json = await res.json();
       setData(json);
     } catch (err) {

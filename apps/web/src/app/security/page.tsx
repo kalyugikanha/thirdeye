@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { ShieldAlert, ShieldCheck, CheckCircle2, XCircle, Loader2, Sparkles, AlertCircle, Lock } from 'lucide-react';
 import Sidebar from '@/components/Sidebar';
+import { apiUrl } from '@/lib/api';
 
 interface SecurityCheck {
   id: string;
@@ -32,7 +33,7 @@ export default function SecurityPage() {
     setResult(null);
     const token = localStorage.getItem('te_token');
     try {
-      const res = await fetch('http://localhost:8000/api/v1/security/scan', {
+      const res = await fetch(apiUrl('/api/v1/security/scan'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

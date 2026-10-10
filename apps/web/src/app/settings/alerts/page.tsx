@@ -1,6 +1,7 @@
 "use client";
 
 import Sidebar from '@/components/Sidebar';
+import { apiUrl } from '@/lib/api';
 
 
 import { useState, useEffect } from 'react';
@@ -30,7 +31,7 @@ export default function AlertChannelsPage() {
     const token = localStorage.getItem('te_token');
     if (!token) return router.push('/login');
     try {
-      const res = await fetch('http://localhost:8000/api/v1/alert-channels', {
+      const res = await fetch(apiUrl('/api/v1/alert-channels'), {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
@@ -51,7 +52,7 @@ export default function AlertChannelsPage() {
     if (!name || !url) return;
     const token = localStorage.getItem('te_token');
     try {
-      const res = await fetch('http://localhost:8000/api/v1/alert-channels', {
+      const res = await fetch(apiUrl('/api/v1/alert-channels'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -74,7 +75,7 @@ export default function AlertChannelsPage() {
     setTestResult(null);
     const token = localStorage.getItem('te_token');
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/alert-channels/${id}/test`, {
+      const res = await fetch(apiUrl(`/api/v1/alert-channels/${id}/test`), {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -91,7 +92,7 @@ export default function AlertChannelsPage() {
   const handleDeleteChannel = async (id: number) => {
     const token = localStorage.getItem('te_token');
     try {
-      await fetch(`http://localhost:8000/api/v1/alert-channels/${id}`, {
+      await fetch(apiUrl(`/api/v1/alert-channels/${id}`), {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });

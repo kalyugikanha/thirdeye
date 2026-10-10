@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { TrendingUp, Users, Loader2 } from 'lucide-react';
 import Sidebar from '@/components/Sidebar';
+import { apiUrl } from '@/lib/api';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 export default function AnalyticsPage() {
@@ -20,7 +21,7 @@ export default function AnalyticsPage() {
 
     const fetchAnalytics = async () => {
       try {
-        const res = await fetch('http://localhost:8000/api/v1/analytics/timeseries', {
+        const res = await fetch(apiUrl('/api/v1/analytics/timeseries'), {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (res.status === 401) {

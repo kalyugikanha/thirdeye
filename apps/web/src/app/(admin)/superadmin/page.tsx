@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Server, Users, Activity, Plug, ArrowRight, Loader2, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
+import { apiUrl } from '@/lib/api';
 
 export default function SuperAdminPage() {
   const router = useRouter();
@@ -17,8 +18,8 @@ export default function SuperAdminPage() {
     const token = localStorage.getItem('te_token');
     try {
       const url = selectedProjectId === 'all' 
-        ? 'http://localhost:8000/api/v1/admin/stats'
-        : `http://localhost:8000/api/v1/admin/stats?project_id=${selectedProjectId}`;
+        ? apiUrl('/api/v1/admin/stats')
+        : apiUrl(`/api/v1/admin/stats?project_id=${selectedProjectId}`);
       const res = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -35,7 +36,7 @@ export default function SuperAdminPage() {
   const fetchProjects = async () => {
     const token = localStorage.getItem('te_token');
     try {
-      const res = await fetch('http://localhost:8000/api/v1/admin/projects', {
+      const res = await fetch(apiUrl('/api/v1/admin/projects'), {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.status === 401) return router.push('/login');

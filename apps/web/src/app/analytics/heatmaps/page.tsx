@@ -1,7 +1,7 @@
 "use client";
 
 import Sidebar from '@/components/Sidebar';
-
+import { apiUrl } from '@/lib/api';
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -26,7 +26,7 @@ export default function HeatmapPage() {
     const token = localStorage.getItem('te_token');
     if (!token) return router.push('/login');
     try {
-      const res = await fetch('http://localhost:8000/api/v1/analytics/heatmaps', {
+      const res = await fetch(apiUrl('/api/v1/analytics/heatmaps'), {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();

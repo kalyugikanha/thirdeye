@@ -1,7 +1,7 @@
 "use client";
 
 import Sidebar from '@/components/Sidebar';
-
+import { apiUrl } from '@/lib/api';
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -29,7 +29,7 @@ export default function AlertsPage() {
       return;
     }
     try {
-      const res = await fetch('http://localhost:8000/api/v1/notifications', {
+      const res = await fetch(apiUrl('/api/v1/notifications'), {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.status === 401) {
@@ -53,7 +53,7 @@ export default function AlertsPage() {
   const handleMarkRead = async (id: number) => {
     const token = localStorage.getItem('te_token');
     try {
-      await fetch(`http://localhost:8000/api/v1/notifications/${id}/read`, {
+      await fetch(apiUrl(`/api/v1/notifications/${id}/read`), {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });

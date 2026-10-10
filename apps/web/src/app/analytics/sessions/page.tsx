@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import Sidebar from '@/components/Sidebar';
+import { API_BASE } from '@/lib/api';
 import {
   BarChart as BarChartIcon,
   LayoutTemplate,
@@ -56,8 +57,6 @@ export default function SessionsPage() {
   const [replayEvents, setReplayEvents] = useState<any[] | null>(null);
   const [loadingReplay, setLoadingReplay] = useState(false);
   const [replayError, setReplayError] = useState<string | null>(null);
-
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
   const loadSessions = useCallback(async () => {
     try {

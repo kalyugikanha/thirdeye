@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { CheckCircle, ArrowRight, Copy, TerminalSquare, Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { apiUrl, API_BASE } from '@/lib/api';
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -21,7 +22,7 @@ export default function OnboardingPage() {
       const token = localStorage.getItem('te_token');
       if (!token) return router.push('/login');
 
-      const response = await fetch('http://localhost:8000/api/projects', {
+      const response = await fetch(apiUrl('/api/projects'), {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -46,7 +47,7 @@ export default function OnboardingPage() {
   };
 
   const copyToClipboard = () => {
-    const code = `<script>\n  (function(t,h,i,r,d){\n    t.ThirdEye=t.ThirdEye||{};\n    var s=h.createElement('script');\n    s.src='http://localhost:8000/public/te.js';\n    s.setAttribute('data-key',i);\n    h.head.appendChild(s);\n  })(window,document,'${apiKey}');\n</script>`;
+    const code = `<script>\n  (function(t,h,i,r,d){\n    t.ThirdEye=t.ThirdEye||{};\n    var s=h.createElement('script');\n    s.src='${API_BASE}/public/te.js';\n    s.setAttribute('data-key',i);\n    h.head.appendChild(s);\n  })(window,document,'${apiKey}');\n</script>`;
     navigator.clipboard.writeText(code);
     alert('Copied to clipboard!');
   };
@@ -169,7 +170,7 @@ export default function OnboardingPage() {
                   {'  '}(<span className="text-purple-400">function</span>(t,h,i,r,d){'{'}{'\n'}
                   {'    '}t.ThirdEye=t.ThirdEye||{'{'}{'}'};{'\n'}
                   {'    '}<span className="text-purple-400">var</span> s=h.createElement(<span className="text-amber-300">'script'</span>);{'\n'}
-                  {'    '}s.src=<span className="text-amber-300">'http://localhost:8000/public/te.js'</span>;{'\n'}
+                  {'    '}s.src=<span className="text-amber-300">`'{API_BASE}/public/te.js'`</span>;{'\n'}
                   {'    '}s.setAttribute(<span className="text-amber-300">'data-key'</span>,i);{'\n'}
                   {'    '}h.head.appendChild(s);{'\n'}
                   {'  '}{'}'})(window,document,<span className="text-amber-300">'{apiKey}'</span>);{'\n'}

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, ArrowRight, GitMerge, Loader2, Sparkles, TrendingDown, Users } from 'lucide-react';
 import Sidebar from '@/components/Sidebar';
+import { apiUrl } from '@/lib/api';
 
 interface FunnelStep {
   step: number;
@@ -38,13 +39,13 @@ export default function FunnelsPage() {
     const token = localStorage.getItem('te_token');
     if (!token) return router.push('/login');
     try {
-      const projRes = await fetch('http://localhost:8000/api/projects', {
+      const projRes = await fetch(apiUrl('/api/projects'), {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const projects = await projRes.json();
       if (projects.length > 0) setProjectId(projects[0].id);
 
-      const res = await fetch('http://localhost:8000/api/v1/funnels', {
+      const res = await fetch(apiUrl('/api/v1/funnels'), {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
@@ -65,7 +66,7 @@ export default function FunnelsPage() {
     setLoadingAnalytics(true);
     const token = localStorage.getItem('te_token');
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/funnels/${id}/analytics`, {
+      const res = await fetch(apiUrl(`/api/v1/funnels/${id}/analytics`), {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
@@ -94,7 +95,7 @@ export default function FunnelsPage() {
     const token = localStorage.getItem('te_token');
     const stepsArr = stepsInput.split(',').map(s => s.trim()).filter(Boolean);
     try {
-      const res = await fetch('http://localhost:8000/api/v1/funnels', {
+      const res = await fetch(apiUrl('/api/v1/funnels'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

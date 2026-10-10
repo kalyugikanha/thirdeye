@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { FileText, Printer, CheckCircle2, ShieldCheck, Clock, Calendar, Download, Loader2 } from 'lucide-react';
 import Sidebar from '@/components/Sidebar';
+import { apiUrl } from '@/lib/api';
 
 interface SLAReport {
   organization_id: number;
@@ -27,7 +28,7 @@ export default function SLAReportsPage() {
       const token = localStorage.getItem('te_token');
       if (!token) return router.push('/login');
       try {
-        const res = await fetch('http://localhost:8000/api/v1/reports/sla', {
+        const res = await fetch(apiUrl('/api/v1/reports/sla'), {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         const data = await res.json();

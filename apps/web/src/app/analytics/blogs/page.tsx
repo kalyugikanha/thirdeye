@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { BookOpen, Clock, Eye, TrendingUp, Sparkles, Loader2, ArrowRight } from 'lucide-react';
 import Sidebar from '@/components/Sidebar';
+import { apiUrl } from '@/lib/api';
 
 interface TopArticle {
   url: string;
@@ -30,7 +31,7 @@ export default function BlogsPage() {
       const token = localStorage.getItem('te_token');
       if (!token) return router.push('/login');
       try {
-        const res = await fetch('http://localhost:8000/api/v1/analytics/blogs', {
+        const res = await fetch(apiUrl('/api/v1/analytics/blogs'), {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         const json = await res.json();

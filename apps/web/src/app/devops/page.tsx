@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Activity, Terminal, Loader2, GitCommit } from 'lucide-react';
 import Sidebar from '@/components/Sidebar';
+import { apiUrl } from '@/lib/api';
 
 export default function DevOpsPage() {
   const router = useRouter();
@@ -21,7 +22,7 @@ export default function DevOpsPage() {
     const fetchCommits = async () => {
       const repo = localStorage.getItem('te_github_repo') || 'facebook/react';
       try {
-        const res = await fetch(`http://localhost:8000/api/v1/github/commits?repo=${repo}`, {
+        const res = await fetch(apiUrl(`/api/v1/github/commits?repo=${repo}`), {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (res.status === 401) {

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Workflow, Plus, Play, CheckCircle2, XCircle, Loader2, ArrowRight } from 'lucide-react';
 import Sidebar from '@/components/Sidebar';
+import { apiUrl } from '@/lib/api';
 
 interface Step {
   name: string;
@@ -36,13 +37,13 @@ export default function SyntheticPage() {
     const token = localStorage.getItem('te_token');
     if (!token) return router.push('/login');
     try {
-      const projRes = await fetch('http://localhost:8000/api/projects', {
+      const projRes = await fetch(apiUrl('/api/projects'), {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const projects = await projRes.json();
       if (projects.length > 0) setProjectId(projects[0].id);
 
-      const res = await fetch('http://localhost:8000/api/v1/synthetic/monitors', {
+      const res = await fetch(apiUrl('/api/v1/synthetic/monitors'), {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
@@ -68,7 +69,7 @@ export default function SyntheticPage() {
       { name: 'Step 2: Fetch Account Profile', url: step2Url, method: 'GET', expected_status: 200 }
     ];
     try {
-      const res = await fetch('http://localhost:8000/api/v1/synthetic/monitors', {
+      const res = await fetch(apiUrl('/api/v1/synthetic/monitors'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -92,7 +93,7 @@ export default function SyntheticPage() {
     setRunResults(null);
     const token = localStorage.getItem('te_token');
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/synthetic/monitors/${id}/run`, {
+      const res = await fetch(apiUrl(`/api/v1/synthetic/monitors/${id}/run`), {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });

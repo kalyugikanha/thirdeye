@@ -1,6 +1,7 @@
 "use client";
 
 import Sidebar from '@/components/Sidebar';
+import { apiUrl } from '@/lib/api';
 
 
 import { useState, useEffect } from 'react';
@@ -29,7 +30,7 @@ export default function TeamPage() {
     const token = localStorage.getItem('te_token');
     if (!token) return router.push('/login');
     try {
-      const res = await fetch('http://localhost:8000/api/v1/team/members', {
+      const res = await fetch(apiUrl('/api/v1/team/members'), {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
@@ -50,7 +51,7 @@ export default function TeamPage() {
     if (!inviteEmail) return;
     const token = localStorage.getItem('te_token');
     try {
-      const res = await fetch('http://localhost:8000/api/v1/team/invites', {
+      const res = await fetch(apiUrl('/api/v1/team/invites'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -81,7 +82,7 @@ export default function TeamPage() {
   const handleRemoveMember = async (id: number) => {
     const token = localStorage.getItem('te_token');
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/team/members/${id}`, {
+      const res = await fetch(apiUrl(`/api/v1/team/members/${id}`), {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });

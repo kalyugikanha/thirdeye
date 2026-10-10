@@ -1,7 +1,7 @@
 "use client";
 
 import Sidebar from '@/components/Sidebar';
-
+import { apiUrl } from '@/lib/api';
 
 import { useState } from 'react';
 import { LayoutTemplate, BarChart, ShieldCheck, Activity, Bell, Search, TrendingUp, CheckCircle, XCircle, Loader2, Sparkles } from 'lucide-react';
@@ -37,7 +37,7 @@ export default function SeoPage() {
     setReport(null);
     const token = localStorage.getItem('te_token');
     try {
-      const res = await fetch('http://localhost:8000/api/v1/seo/audit', {
+      const res = await fetch(apiUrl('/api/v1/seo/audit'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

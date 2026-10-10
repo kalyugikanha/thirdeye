@@ -72,12 +72,20 @@ for _db_path in [BASE_DIR / "thirdeye.db", ROOT_DIR / "thirdeye.db"]:
 
 app = FastAPI(title='ThirdEye AI Workspace API')
 
-allowed_origins_str = os.getenv('ALLOWED_ORIGINS', '*')
-allowed_origins = [o.strip() for o in allowed_origins_str.split(',') if o.strip()]
+allowed_origins_str = os.getenv('ALLOWED_ORIGINS', '')
+if allowed_origins_str:
+    allowed_origins = [o.strip() for o in allowed_origins_str.split(',') if o.strip()]
+else:
+    allowed_origins = [
+        'http://localhost:3000',
+        'http://localhost:10000',
+        'https://thirdeye-ypjw.onrender.com'
+    ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins if allowed_origins else ['*'],
+    allow_origins=allowed_origins,
+    allow_origin_regex=r'https://.*\.onrender\.com',
     allow_credentials=True,
     allow_methods=['*'],
     allow_headers=['*'],

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Search, Sparkles, Activity, Users, Zap, CheckCircle, Plus, GitBranch, Globe, Database, LayoutTemplate, ShieldCheck, ArrowRight, BarChart, Loader2, Bell, TrendingUp } from 'lucide-react';
 import Link from 'next/link';
 import Sidebar from '@/components/Sidebar';
+import { apiUrl } from '@/lib/api';
 
 export default function Page() {
   const [stats, setStats] = useState({ api_uptime: 0, avg_latency: 0, active_sessions: 0 });
@@ -25,7 +26,7 @@ export default function Page() {
     setAiResponse(null);
     try {
       const token = localStorage.getItem('te_token');
-      const res = await fetch('http://localhost:8000/api/v1/insights', {
+      const res = await fetch(apiUrl('/api/v1/insights'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ query: aiQuery })
@@ -50,7 +51,7 @@ export default function Page() {
     const initDashboard = async () => {
       try {
         // Fetch projects to get ID
-        const projRes = await fetch('http://localhost:8000/api/projects', {
+        const projRes = await fetch(apiUrl('/api/projects'), {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (projRes.status === 401) {
@@ -63,7 +64,7 @@ export default function Page() {
         setProjectId(activeProjectId);
 
         // Fetch Stats
-        const statsRes = await fetch('http://localhost:8000/api/v1/dashboard/stats', {
+        const statsRes = await fetch(apiUrl('/api/v1/dashboard/stats'), {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         const statsData = await statsRes.json();
@@ -97,7 +98,7 @@ export default function Page() {
     setInstalling(provider);
     const token = localStorage.getItem('te_token');
     try {
-      const res = await fetch('http://localhost:8000/api/v1/connectors', {
+      const res = await fetch(apiUrl('/api/v1/connectors'), {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
