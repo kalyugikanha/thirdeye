@@ -8,7 +8,7 @@ import Sidebar from '@/components/Sidebar';
 import { apiUrl } from '@/lib/api';
 
 export default function Page() {
-  const [stats, setStats] = useState({ api_uptime: 0, avg_latency: 0, active_sessions: 0 });
+  const [stats, setStats] = useState({ api_uptime: 0, avg_latency: 0, active_sessions: 0, total_events: 0, last_event_at: null });
   const [loading, setLoading] = useState(true);
   const [connectors, setConnectors] = useState<string[]>(['js_snippet']); // Start with snippet connected
   const [installing, setInstalling] = useState<string | null>(null);
@@ -163,34 +163,46 @@ export default function Page() {
           <section>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Overall Platform Health</h2>
-              <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">
-                <CheckCircle className="w-3.5 h-3.5" /> All systems operational
-              </span>
+              {stats.total_events > 0 ? (
+                <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  Tracking Active &bull; {stats.total_events} events received
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-xs font-medium text-amber-700 bg-amber-50 px-3 py-1 rounded-full border border-amber-200">
+                  <span className="h-2 w-2 rounded-full bg-amber-400"></span>
+                  Waiting for first event from snippet...
+                </span>
+              )}
             </div>
             
             <div className="grid grid-cols-3 gap-6">
               {/* Metric 1 */}
               <div className="flex flex-col p-5 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-white hover:shadow-sm transition-all cursor-pointer">
                 <div className="flex items-center gap-2 text-slate-500 mb-3 text-sm font-medium">
-                  <Activity className="w-4 h-4 text-blue-500" /> API Uptime
+                  <Activity className="w-4 h-4 text-blue-500" /> Platform Status
                 </div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-3xl font-bold text-slate-900">
-                    {loading ? <Loader2 className="w-6 h-6 animate-spin text-slate-300" /> : `${stats.api_uptime}%`}
+                    {loading ? <Loader2 className="w-6 h-6 animate-spin text-slate-300" /> : (stats.total_events > 0 ? '100%' : '0%')}
                   </span>
+                  {!loading && <span className="text-xs font-medium text-emerald-500">Online</span>}
                 </div>
               </div>
 
               {/* Metric 2 */}
               <div className="flex flex-col p-5 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-white hover:shadow-sm transition-all cursor-pointer">
                 <div className="flex items-center gap-2 text-slate-500 mb-3 text-sm font-medium">
-                  <Zap className="w-4 h-4 text-orange-500" /> Avg Latency
+                  <Zap className="w-4 h-4 text-orange-500" /> Total Tracked Events
                 </div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-3xl font-bold text-slate-900">
-                    {loading ? <Loader2 className="w-6 h-6 animate-spin text-slate-300" /> : stats.avg_latency}
+                    {loading ? <Loader2 className="w-6 h-6 animate-spin text-slate-300" /> : stats.total_events}
                   </span>
-                  {!loading && <span className="text-sm font-medium text-slate-500">ms</span>}
+                  {!loading && <span className="text-sm font-medium text-slate-500">events</span>}
                 </div>
               </div>
 

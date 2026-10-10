@@ -72,21 +72,10 @@ for _db_path in [BASE_DIR / "thirdeye.db", ROOT_DIR / "thirdeye.db"]:
 
 app = FastAPI(title='ThirdEye AI Workspace API')
 
-allowed_origins_str = os.getenv('ALLOWED_ORIGINS', '')
-if allowed_origins_str:
-    allowed_origins = [o.strip() for o in allowed_origins_str.split(',') if o.strip()]
-else:
-    allowed_origins = [
-        'http://localhost:3000',
-        'http://localhost:10000',
-        'https://thirdeye-ypjw.onrender.com'
-    ]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_origin_regex=r'https://.*\.onrender\.com',
-    allow_credentials=True,
+    allow_origins=['*'],
+    allow_credentials=False,
     allow_methods=['*'],
     allow_headers=['*'],
 )
@@ -360,32 +349,64 @@ def get_user_project_ids(db: Session, user: models.User):
 def get_dashboard_stats(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     project_ids = get_user_project_ids(db, current_user)
     if not project_ids:
-        return {'api_uptime': 0, 'avg_latency': 0, 'active_sessions': 0, 'total_events': 0}
+        return {'api_uptime': 0, 'avg_latency': 0, 'active_sessions': 0, 'total_events': 0, 'last_event_at': None}
     
     active_sessions = db.query(func.count(func.distinct(models.Event.session_id))).filter(models.Event.project_id.in_(project_ids)).scalar() or 0
     total_events = db.query(models.Event).filter(models.Event.project_id.in_(project_ids)).count()
     
+    # Calculate real uptime and latency from user monitors if present
+    monitors = db.query(models.UptimeMonitor).filter(models.UptimeMonitor.project_id.in_(project_ids)).all()
+    if monitors:
+        up_count = sum(1 for m in monitors if m.status == 'up')
+        api_uptime = round((up_count / len(monitors)) * 100, 2)
+        valid_latencies = [m.response_time_ms for m in monitors if m.response_time_ms is not None]
+        avg_latency = round(sum(valid_latencies) / len(valid_latencies)) if valid_latencies else 0
+    else:
+        api_uptime = 100.0 if total_events > 0 else 0.0
+        avg_latency = 0
+    
+    last_event = db.query(models.Event).filter(models.Event.project_id.in_(project_ids)).order_by(models.Event.created_at.desc()).first()
+    last_event_time = last_event.created_at.isoformat() if last_event and last_event.created_at else None
+
     return {
-        'api_uptime': 99.98,
-        'avg_latency': 124,
+        'api_uptime': api_uptime,
+        'avg_latency': avg_latency,
         'active_sessions': active_sessions,
-        'total_events': total_events
+        'total_events': total_events,
+        'last_event_at': last_event_time
     }
 
 @app.get('/api/v1/analytics/timeseries')
 def get_analytics_timeseries(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     project_ids = get_user_project_ids(db, current_user)
-    total_events = db.query(models.Event).filter(models.Event.project_id.in_(project_ids)).count() if project_ids else 0
+    if not project_ids:
+        return []
     
-    base_traffic = max(50, total_events * 2) if project_ids else 0
-    data = []
     now = datetime.utcnow()
+    data = []
     for i in range(7):
-        day = now - timedelta(days=6-i)
+        target_date = (now - timedelta(days=6-i)).date()
+        start_dt = datetime.combine(target_date, datetime.min.time())
+        end_dt = datetime.combine(target_date, datetime.max.time())
+        
+        events_q = db.query(models.Event).filter(
+            models.Event.project_id.in_(project_ids),
+            models.Event.created_at >= start_dt,
+            models.Event.created_at <= end_dt
+        )
+        pageviews = events_q.filter(models.Event.event_type == 'pageview').count()
+        visitors = db.query(func.count(func.distinct(models.Event.session_id))).filter(
+            models.Event.project_id.in_(project_ids),
+            models.Event.created_at >= start_dt,
+            models.Event.created_at <= end_dt
+        ).scalar() or 0
+
         data.append({
-            'name': day.strftime('%a'),
-            'pageviews': base_traffic + (i * 10) + (total_events if i == 6 else 0),
-            'visitors': (base_traffic // 2) + (i * 5) + (total_events if i == 6 else 0)
+            'name': target_date.strftime('%a'),
+            'date': target_date.isoformat(),
+            'pageviews': pageviews,
+            'visitors': visitors,
+            'sessions': visitors
         })
     return data
 

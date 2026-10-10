@@ -180,11 +180,29 @@
     });
   }
 
-  // Automatically track pageview
+  // Automatically track initial pageview
   track('pageview');
+
+  // Automatically track clicks for Heatmaps & Analytics
+  document.addEventListener('click', function(e) {
+    try {
+      var x = Math.round((e.pageX / Math.max(window.innerWidth, 1)) * 100);
+      var y = Math.round((e.pageY / Math.max(document.documentElement.scrollHeight, window.innerHeight, 1)) * 100);
+      var targetTag = e.target ? (e.target.tagName || '').toLowerCase() : '';
+      var targetText = e.target && e.target.innerText ? e.target.innerText.trim().substring(0, 30) : '';
+      track('click', {
+        x: x,
+        y: y,
+        tag: targetTag,
+        text: targetText
+      });
+    } catch (clickErr) {}
+  }, true);
 
   // Initiate session recording
   loadAndStartRecording();
+
+  console.log('[ThirdEye] Tracking active for project:', apiKey, 'via:', apiHost);
 
   // Expose to window
   window.ThirdEye = {

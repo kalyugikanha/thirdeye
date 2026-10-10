@@ -61,7 +61,7 @@ export default function AnalyticsPage() {
                 <Users className="w-4 h-4 text-purple-500" /> Total Tracked Sessions
               </div>
               <div className="text-2xl font-bold text-slate-900">
-                {loading ? <Loader2 className="w-5 h-5 animate-spin text-slate-400" /> : data.reduce((acc, curr: any) => acc + curr.sessions, 0)}
+                {loading ? <Loader2 className="w-5 h-5 animate-spin text-slate-400" /> : data.reduce((acc, curr: any) => acc + (curr.visitors || curr.sessions || 0), 0)}
               </div>
             </div>
             <div className="bg-slate-50 border border-slate-100 p-5 rounded-2xl">
@@ -69,7 +69,7 @@ export default function AnalyticsPage() {
                 <TrendingUp className="w-4 h-4 text-blue-500" /> Total Pageviews
               </div>
               <div className="text-2xl font-bold text-slate-900">
-                {loading ? <Loader2 className="w-5 h-5 animate-spin text-slate-400" /> : data.reduce((acc, curr: any) => acc + curr.pageviews, 0)}
+                {loading ? <Loader2 className="w-5 h-5 animate-spin text-slate-400" /> : data.reduce((acc, curr: any) => acc + (curr.pageviews || 0), 0)}
               </div>
             </div>
           </div>
@@ -86,12 +86,12 @@ export default function AnalyticsPage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={data}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="timestamp" stroke="#94a3b8" fontSize={12} tickLine={false} />
+                    <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} tickLine={false} />
                     <YAxis stroke="#94a3b8" fontSize={12} tickLine={false} />
                     <Tooltip contentStyle={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }} />
                     <Legend />
                     <Line type="monotone" dataKey="pageviews" name="Pageviews" stroke="#2563eb" strokeWidth={3} dot={{ r: 4, fill: '#2563eb' }} activeDot={{ r: 6 }} />
-                    <Line type="monotone" dataKey="sessions" name="Unique Sessions" stroke="#9333ea" strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3, fill: '#9333ea' }} />
+                    <Line type="monotone" dataKey="visitors" name="Unique Visitors" stroke="#9333ea" strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3, fill: '#9333ea' }} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
