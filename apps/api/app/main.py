@@ -489,8 +489,24 @@ def get_super_admin_stats(project_id: Optional[int] = None, db: Session = Depend
         total_connectors = db.query(models.Connector).count()
         return {'total_organizations': total_orgs, 'total_projects': total_projects, 'total_events': total_events, 'total_connectors': total_connectors}
 
-import google.generativeai as genai
-import os
+def generate_gemini_content(prompt: str, api_key: str, model_candidate: str = 'gemini-2.5-flash') -> str:
+    candidates = [model_candidate, 'gemini-2.0-flash', 'gemini-flash-latest', 'gemini-1.5-flash-latest']
+    for candidate in candidates:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{candidate}:generateContent?key={api_key}"
+            headers = {"Content-Type": "application/json"}
+            payload = json.dumps({"contents": [{"parts": [{"text": prompt}]}]}).encode("utf-8")
+            req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                candidates_list = data.get("candidates", [])
+                if candidates_list:
+                    parts = candidates_list[0].get("content", {}).get("parts", [])
+                    if parts:
+                        return parts[0].get("text", "").strip()
+        except Exception:
+            continue
+    raise RuntimeError("Failed to generate content from Gemini API.")
 
 class InsightQuery(BaseModel):
     query: str
@@ -500,20 +516,6 @@ def get_ai_insight(query: InsightQuery, db: Session = Depends(get_db), current_u
     api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
         return {"insight": "AI is disabled: GEMINI_API_KEY not found in environment."}
-    
-    genai.configure(api_key=api_key)
-    
-    # Try active Gemini model candidates
-    model = None
-    for candidate in ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-1.5-flash-latest', 'gemini-2.0-flash']:
-        try:
-            model = genai.GenerativeModel(candidate)
-            break
-        except Exception:
-            continue
-
-    if not model:
-        model = genai.GenerativeModel('gemini-2.5-flash')
     
     schema = """
     Table: projects (id, name, domain, organization_id, api_key)
@@ -526,8 +528,8 @@ def get_ai_insight(query: InsightQuery, db: Session = Depends(get_db), current_u
     prompt1 = f"Given this schema:\n{schema}\n\nWrite a safe, read-only SQL query to answer: '{query.query}'. IMPORTANT: the events table contains 'project_id'. Assume we are looking at projects for organization_id = {current_user.organization_id}. You may need to JOIN projects on projects.id = events.project_id WHERE projects.organization_id = {current_user.organization_id}. Return ONLY the raw SQL query, no markdown blocks, no explanation."
     
     try:
-        sql_response = model.generate_content(prompt1)
-        raw_sql = sql_response.text.strip().replace('```sql', '').replace('```', '').replace('`sql', '').replace('`', '').strip()
+        raw_sql = generate_gemini_content(prompt1, api_key)
+        raw_sql = raw_sql.replace('```sql', '').replace('```', '').replace('`sql', '').replace('`', '').strip()
         
         if any(keyword in raw_sql.upper() for keyword in ['DROP ', 'DELETE ', 'UPDATE ', 'INSERT ', 'ALTER ']):
             return {"insight": "Blocked: Unsafe query detected."}
@@ -536,9 +538,9 @@ def get_ai_insight(query: InsightQuery, db: Session = Depends(get_db), current_u
         rows = result.fetchall()
         
         prompt2 = f"Question: {query.query}\nSQL used: {raw_sql}\nData results: {str(rows)}\n\nWrite a helpful 1-2 sentence insight for the user based on these results. Keep it conversational."
-        insight_response = model.generate_content(prompt2)
+        insight_text = generate_gemini_content(prompt2, api_key)
         
-        return {"insight": insight_response.text.strip(), "sql_used": raw_sql, "data": str(rows)}
+        return {"insight": insight_text, "sql_used": raw_sql, "data": str(rows)}
         
     except Exception as e:
         return {"insight": f"Failed to generate insight: {str(e)}"}
