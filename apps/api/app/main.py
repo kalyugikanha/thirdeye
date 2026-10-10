@@ -103,6 +103,30 @@ def create_default_user():
         db.add(new_user)
         db.commit()
 
+    # Seed ScanPe user account
+    user_scan = db.query(models.User).filter(models.User.email == 'scan.pe.in@gmail.com').first()
+    scan_org = db.query(models.Organization).filter(models.Organization.name == 'ScanPe').first()
+    if not scan_org:
+        scan_org = models.Organization(name='ScanPe')
+        db.add(scan_org)
+        db.commit()
+        db.refresh(scan_org)
+
+    if not user_scan:
+        hashed_scan = auth.get_password_hash('AKAsh@123')
+        user_scan = models.User(email='scan.pe.in@gmail.com', hashed_password=hashed_scan, name='Aakash', role='ADMIN', organization_id=scan_org.id)
+        db.add(user_scan)
+        db.commit()
+        db.refresh(user_scan)
+
+    # Seed user project with installed API key
+    target_key = 'te_live_990c733a065d43b3b70bb0c1227d2f3c'
+    proj = db.query(models.Project).filter(models.Project.api_key == target_key).first()
+    if not proj:
+        proj = models.Project(name='ScanPe Production', domain='scan.pe.in', organization_id=scan_org.id, api_key=target_key)
+        db.add(proj)
+        db.commit()
+
 # --- AUTH ---
 class UserCreate(BaseModel):
     email: EmailStr
@@ -414,10 +438,11 @@ def get_analytics_timeseries(db: Session = Depends(get_db), current_user: models
 class ProjectCreate(BaseModel):
     name: str
     domain: str
+    api_key: Optional[str] = None
 
 @app.post('/api/projects')
 def create_project(project: ProjectCreate, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    api_key = f'te_live_{uuid.uuid4().hex}'
+    api_key = project.api_key if project.api_key else f'te_live_{uuid.uuid4().hex}'
     db_proj = models.Project(name=project.name, domain=project.domain, organization_id=current_user.organization_id, api_key=api_key)
     db.add(db_proj)
     db.commit()
