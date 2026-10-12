@@ -123,10 +123,17 @@ def create_default_user():
     target_key = 'te_live_990c733a065d43b3b70bb0c1227d2f3c'
     proj = db.query(models.Project).filter(models.Project.api_key == target_key).first()
     if not proj:
-        proj = models.Project(name='ScanPe Production', domain='scan.pe.in', organization_id=scan_org.id, api_key=target_key)
+        proj = models.Project(name='GrowInsight Production', domain='growinsight.co.in', organization_id=scan_org.id, api_key=target_key)
         db.add(proj)
         db.commit()
         db.refresh(proj)
+    else:
+        # Update existing project domain to growinsight.co.in
+        if proj.domain == 'scan.pe.in' or not proj.domain:
+            proj.name = 'GrowInsight Production'
+            proj.domain = 'growinsight.co.in'
+            db.commit()
+            db.refresh(proj)
 
     # Seed uptime monitor for user's domain
     if proj:
@@ -134,13 +141,17 @@ def create_default_user():
         if not monitor:
             monitor = models.UptimeMonitor(
                 project_id=proj.id,
-                name="ScanPe Production Site",
-                url="https://scanpe.in",
+                name="GrowInsight Production Site",
+                url="https://growinsight.co.in/",
                 status="up",
                 response_time_ms=120,
                 last_checked=datetime.utcnow()
             )
             db.add(monitor)
+            db.commit()
+        elif 'scanpe' in (monitor.url or ''):
+            monitor.name = "GrowInsight Production Site"
+            monitor.url = "https://growinsight.co.in/"
             db.commit()
 
 # --- AUTH ---
@@ -523,6 +534,30 @@ def create_project(project: ProjectCreate, db: Session = Depends(get_db), curren
 @app.get('/api/projects')
 def get_projects(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     return get_user_projects(db, current_user)
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = None
+    domain: Optional[str] = None
+
+@app.patch('/api/projects/{project_id}')
+def update_project(project_id: int, data: ProjectUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    proj = db.query(models.Project).filter(
+        models.Project.id == project_id,
+        models.Project.organization_id == current_user.organization_id
+    ).first()
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if data.name and data.name.strip():
+        proj.name = data.name.strip()
+    if data.domain and data.domain.strip():
+        clean_domain = data.domain.replace('https://', '').replace('http://', '').strip('/')
+        proj.domain = clean_domain
+        monitor = db.query(models.UptimeMonitor).filter(models.UptimeMonitor.project_id == proj.id).first()
+        if monitor:
+            monitor.url = f"https://{clean_domain}/"
+    db.commit()
+    db.refresh(proj)
+    return proj
 
 # --- CONNECTORS & EXTERNAL APIS ---
 class ConnectorCreate(BaseModel):

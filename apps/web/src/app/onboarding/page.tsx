@@ -1,196 +1,368 @@
 "use client";
 
-import { useState } from 'react';
-import { CheckCircle, ArrowRight, Copy, TerminalSquare, Loader2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { 
+  CheckCircle2, 
+  Copy, 
+  TerminalSquare, 
+  Loader2, 
+  Globe2, 
+  Save, 
+  ArrowRight, 
+  Check, 
+  ExternalLink,
+  Code2,
+  Settings2,
+  Sparkles
+} from 'lucide-react';
+import Sidebar from '@/components/Sidebar';
 import { apiUrl, API_BASE } from '@/lib/api';
+
+interface Project {
+  id: number;
+  name: string;
+  domain: string;
+  api_key: string;
+}
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const [step, setStep] = useState(2); // Start at project step
-  const [loading, setLoading] = useState(false);
-  const [projectName, setProjectName] = useState('');
-  const [domain, setDomain] = useState('');
-  const [apiKey, setApiKey] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [activeProject, setActiveProject] = useState<Project | null>(null);
+  
+  // Form states
+  const [projectName, setProjectName] = useState('GrowInsight Production');
+  const [domain, setDomain] = useState('growinsight.co.in');
+  const [apiKey, setApiKey] = useState('te_live_990c733a065d43b3b70bb0c1227d2f3c');
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  const handleGenerate = async (e: React.FormEvent) => {
+  useEffect(() => {
+    const token = localStorage.getItem('te_token');
+    if (!token) {
+      router.push('/login');
+      return;
+    }
+
+    const loadProjects = async () => {
+      try {
+        const res = await fetch(apiUrl('/api/projects'), {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.status === 401) {
+          localStorage.removeItem('te_token');
+          router.push('/login');
+          return;
+        }
+        if (res.ok) {
+          const projects = await res.json();
+          if (Array.isArray(projects) && projects.length > 0) {
+            const p = projects[0];
+            setActiveProject(p);
+            setProjectName(p.name || 'GrowInsight Production');
+            setDomain(p.domain || 'growinsight.co.in');
+            if (p.api_key) setApiKey(p.api_key);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load project details:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadProjects();
+  }, [router]);
+
+  // Handle Domain & Name Update
+  const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!projectName || !domain) return;
-    
-    setLoading(true);
+    if (!projectName.trim() || !domain.trim()) return;
+
+    setSaving(true);
+    setSaveSuccess(false);
+
     try {
       const token = localStorage.getItem('te_token');
-      if (!token) return router.push('/login');
+      const cleanDomain = domain.replace('https://', '').replace('http://', '').replace(/\/$/, '').trim();
 
-      const response = await fetch(apiUrl('/api/projects'), {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          name: projectName,
-          domain: domain
-        })
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setApiKey(data.api_key);
-        setStep(3); // Move to install step
+      if (activeProject) {
+        // Update existing project via PATCH
+        const res = await fetch(apiUrl(`/api/projects/${activeProject.id}`), {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            name: projectName.trim(),
+            domain: cleanDomain
+          })
+        });
+
+        if (res.ok) {
+          const updated = await res.json();
+          setActiveProject(updated);
+          setDomain(updated.domain);
+          setProjectName(updated.name);
+          setSaveSuccess(true);
+          setTimeout(() => setSaveSuccess(false), 3000);
+        }
+      } else {
+        // Create new project if none existed
+        const res = await fetch(apiUrl('/api/projects'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            name: projectName.trim(),
+            domain: cleanDomain,
+            api_key: apiKey
+          })
+        });
+
+        if (res.ok) {
+          const created = await res.json();
+          setActiveProject(created);
+          setDomain(created.domain);
+          setProjectName(created.name);
+          setSaveSuccess(true);
+          setTimeout(() => setSaveSuccess(false), 3000);
+        }
       }
-    } catch (error) {
-      console.error('Failed to create project:', error);
+    } catch (err) {
+      console.error('Failed to update project settings:', err);
+      alert('Failed to update settings. Please try again.');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
   const copyToClipboard = () => {
     const code = `<script>\n  (function(t,h,i,r,d){\n    t.ThirdEye=t.ThirdEye||{};\n    var s=h.createElement('script');\n    s.src='${API_BASE}/public/te.js';\n    s.setAttribute('data-key',i);\n    h.head.appendChild(s);\n  })(window,document,'${apiKey}');\n</script>`;
     navigator.clipboard.writeText(code);
-    alert('Copied to clipboard!');
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
   };
 
-  return (
-    <div className="min-h-screen bg-white flex flex-col pt-16 px-6">
-      
-      <div className="max-w-3xl mx-auto w-full">
-        {/* Progress Tracker */}
-        <div className="flex items-center justify-between mb-12">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-sm shadow-sm">
-              <CheckCircle className="w-5 h-5" />
-            </div>
-            <span className="text-sm font-semibold text-slate-800">Account</span>
-          </div>
-          <div className="h-px bg-slate-200 flex-1 mx-4"></div>
-          <div className="flex items-center gap-2">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm ${step >= 2 ? 'bg-blue-600 text-white' : 'border-2 border-slate-200 text-slate-400'}`}>
-              {step > 2 ? <CheckCircle className="w-5 h-5" /> : '2'}
-            </div>
-            <span className={`text-sm font-semibold ${step >= 2 ? 'text-slate-800' : 'text-slate-400'}`}>Project</span>
-          </div>
-          <div className="h-px bg-slate-200 flex-1 mx-4"></div>
-          <div className="flex items-center gap-2">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${step >= 3 ? 'bg-blue-600 text-white shadow-sm' : 'border-2 border-slate-200 text-slate-400'}`}>
-              3
-            </div>
-            <span className={`text-sm font-semibold ${step >= 3 ? 'text-slate-800' : 'text-slate-400'}`}>Install</span>
-          </div>
-        </div>
+  if (loading) {
+    return (
+      <div className="flex min-h-screen bg-slate-50 text-slate-900 font-sans">
+        <Sidebar />
+        <main className="flex-1 flex items-center justify-center">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        </main>
+      </div>
+    );
+  }
 
-        {/* Content Area - Step 2: Project Info */}
-        {step === 2 && (
-          <>
-            <div className="text-center mb-10">
-              <h1 className="text-3xl font-bold tracking-tight text-slate-900 mb-3">
-                Set up your first project
+  return (
+    <div className="flex min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-blue-100">
+      <Sidebar />
+
+      <main className="flex-1 flex flex-col pt-8 px-8 lg:px-12 overflow-y-auto">
+        <div className="w-full max-w-5xl mx-auto flex flex-col gap-8 pb-16">
+          
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-bold uppercase tracking-wider text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200">
+                  Project & Snippet Hub
+                </span>
+              </div>
+              <h1 className="text-2xl lg:text-3xl font-extrabold tracking-tight text-slate-900">
+                Website Tracking & Domain Settings
               </h1>
-              <p className="text-slate-500">
-                Create a project to start tracking your app's performance, UX, and AI insights.
+              <p className="text-xs text-slate-500 mt-1">
+                Manage your website domain and copy your live tracking snippet.
               </p>
             </div>
 
-            <div className="bg-white border border-slate-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-3xl p-8 max-w-xl mx-auto">
-              <form className="space-y-6" onSubmit={handleGenerate}>
+            <button
+              onClick={() => router.push('/')}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 transition-colors shadow-sm self-start sm:self-center"
+            >
+              Go to Workspace Dashboard <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* CARD 1: Domain & Project Settings (EDITABLE) */}
+          <div className="bg-white rounded-3xl p-6 lg:p-8 border border-slate-200/80 shadow-sm">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                  <Settings2 className="w-4 h-4" />
+                </div>
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Project Name</label>
-                  <input 
-                    type="text" 
+                  <h2 className="text-base font-bold text-slate-900">Active Website & Project Details</h2>
+                  <p className="text-xs text-slate-400">Update your target domain anytime without breaking your tracking code.</p>
+                </div>
+              </div>
+              {saveSuccess && (
+                <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Settings Saved!
+                </span>
+              )}
+            </div>
+
+            <form onSubmit={handleSaveSettings} className="space-y-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                    Project Name
+                  </label>
+                  <input
+                    type="text"
                     value={projectName}
                     onChange={(e) => setProjectName(e.target.value)}
                     required
-                    placeholder="e.g. Acme Corp Production" 
-                    className="block w-full rounded-xl border border-slate-200 px-4 py-3 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" 
+                    placeholder="e.g. GrowInsight Production"
+                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
-                
+
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Primary Domain</label>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                    Website Primary Domain
+                  </label>
                   <div className="flex rounded-xl shadow-sm">
-                    <span className="inline-flex items-center rounded-l-xl border border-r-0 border-slate-200 bg-slate-50 px-4 text-slate-500 sm:text-sm">
+                    <span className="inline-flex items-center rounded-l-xl border border-r-0 border-slate-200 bg-slate-50 px-3 text-xs text-slate-500 font-mono">
                       https://
                     </span>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       value={domain}
                       onChange={(e) => setDomain(e.target.value)}
                       required
-                      placeholder="acme.com" 
-                      className="block w-full min-w-0 flex-1 rounded-none rounded-r-xl border border-slate-200 px-4 py-3 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm" 
+                      placeholder="growinsight.co.in"
+                      className="block w-full min-w-0 flex-1 rounded-none rounded-r-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
                     />
                   </div>
                 </div>
+              </div>
 
-                <div className="pt-4">
-                  <button 
-                    type="submit" 
-                    disabled={loading}
-                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 transition-colors disabled:opacity-70"
+              <div className="pt-2 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <Globe2 className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Current Site:</span>
+                  <a 
+                    href={`https://${domain.replace('https://', '')}`} 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    className="font-mono text-blue-600 hover:underline flex items-center gap-1 font-semibold"
                   >
-                    {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Generate Tracking Code'} 
-                    {!loading && <ArrowRight className="w-4 h-4" />}
-                  </button>
+                    https://{domain.replace('https://', '')}/ <ExternalLink className="w-3 h-3" />
+                  </a>
                 </div>
-              </form>
-            </div>
-          </>
-        )}
 
-        {/* Content Area - Step 3: Install Snippet */}
-        {step === 3 && (
-          <>
-            <div className="text-center mb-10">
-              <h1 className="text-3xl font-bold tracking-tight text-slate-900 mb-3">
-                Install your tracking snippet
-              </h1>
-              <p className="text-slate-500">
-                Paste this code inside the <code>&lt;head&gt;</code> tag of your website to start receiving data.
-              </p>
-            </div>
-
-            <div className="bg-white border border-slate-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-3xl p-8 max-w-2xl mx-auto">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                  <TerminalSquare className="w-4 h-4 text-blue-500" />
-                  JavaScript Snippet
-                </div>
-                <button 
-                  onClick={copyToClipboard}
-                  className="flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:text-blue-600 transition-colors bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200"
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold shadow-sm transition-all disabled:opacity-50"
                 >
-                  <Copy className="w-3.5 h-3.5" /> Copy Code
+                  {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                  {saving ? 'Saving...' : 'Save Settings'}
                 </button>
               </div>
-              
-              <div className="bg-slate-900 rounded-xl p-4 overflow-x-auto mb-8">
-                <pre className="text-sm text-emerald-400 font-mono leading-relaxed">
-                  <span className="text-slate-400">&lt;script&gt;</span>{'\n'}
-                  {'  '}(<span className="text-purple-400">function</span>(t,h,i,r,d){'{'}{'\n'}
-                  {'    '}t.ThirdEye=t.ThirdEye||{'{'}{'}'};{'\n'}
-                  {'    '}<span className="text-purple-400">var</span> s=h.createElement(<span className="text-amber-300">'script'</span>);{'\n'}
-                  {'    '}s.src=<span className="text-amber-300">`'{API_BASE}/public/te.js'`</span>;{'\n'}
-                  {'    '}s.setAttribute(<span className="text-amber-300">'data-key'</span>,i);{'\n'}
-                  {'    '}h.head.appendChild(s);{'\n'}
-                  {'  '}{'}'})(window,document,<span className="text-amber-300">'{apiKey}'</span>);{'\n'}
-                  <span className="text-slate-400">&lt;/script&gt;</span>
-                </pre>
+            </form>
+          </div>
+
+          {/* CARD 2: Active Tracking Snippet Code */}
+          <div className="bg-white rounded-3xl p-6 lg:p-8 border border-slate-200/80 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                  <Code2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">Your JavaScript Tracking Snippet</h2>
+                  <p className="text-xs text-slate-400">
+                    Paste this exact code in your WordPress site to capture sessions, pageviews, and clicks.
+                  </p>
+                </div>
               </div>
 
-              <div className="flex gap-4">
-                <button 
-                  onClick={() => router.push('/')}
-                  className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 transition-colors"
-                >
-                  Go to Dashboard <ArrowRight className="w-4 h-4" />
-                </button>
+              <button
+                onClick={copyToClipboard}
+                className="flex items-center gap-1.5 px-4 py-2 bg-slate-900 text-white hover:bg-slate-800 rounded-xl text-xs font-semibold shadow-sm transition-colors"
+              >
+                {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? 'Code Copied!' : 'Copy Snippet'}
+              </button>
+            </div>
+
+            {/* Code Box */}
+            <div className="bg-slate-950 rounded-2xl p-5 overflow-x-auto border border-slate-800/80 my-4 shadow-inner">
+              <pre className="text-xs text-emerald-400 font-mono leading-relaxed select-all">
+                <span className="text-slate-500">&lt;script&gt;</span>{'\n'}
+                {'  '}(<span className="text-purple-400">function</span>(t,h,i,r,d){'{'}{'\n'}
+                {'    '}t.ThirdEye=t.ThirdEye||{'{'}{'}'};{'\n'}
+                {'    '}<span className="text-purple-400">var</span> s=h.createElement(<span className="text-amber-300">'script'</span>);{'\n'}
+                {'    '}s.src=<span className="text-amber-300">'{API_BASE}/public/te.js'</span>;{'\n'}
+                {'    '}s.setAttribute(<span className="text-amber-300">'data-key'</span>,i);{'\n'}
+                {'    '}h.head.appendChild(s);{'\n'}
+                {'  '}{'}'})(window,document,<span className="text-amber-300">'{apiKey}'</span>);{'\n'}
+                <span className="text-slate-500">&lt;/script&gt;</span>
+              </pre>
+            </div>
+
+            {/* Key info pill */}
+            <div className="flex flex-wrap items-center justify-between text-xs text-slate-500 pt-2 gap-2">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-slate-700">Permanent API Key:</span>
+                <span className="font-mono bg-slate-100 text-slate-800 px-2.5 py-0.5 rounded border border-slate-200">
+                  {apiKey}
+                </span>
+              </div>
+              <span className="flex items-center gap-1.5 font-semibold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                Active in Production
+              </span>
+            </div>
+          </div>
+
+          {/* CARD 3: WordPress Quick Guide */}
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50/60 rounded-3xl p-6 lg:p-8 border border-blue-100">
+            <h3 className="font-bold text-slate-900 text-base mb-4 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-blue-600" /> How to install in WordPress (2 Simple Steps):
+            </h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-white p-5 rounded-2xl border border-blue-100 shadow-sm space-y-2">
+                <div className="w-6 h-6 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center">
+                  1
+                </div>
+                <h4 className="font-bold text-slate-900 text-sm">Via WPCode Plugin (Recommended)</h4>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  In your WordPress Admin, go to <strong>Plugins &rarr; Add New</strong>, search for <strong>WPCode (Insert Headers and Footers)</strong> and install it.
+                </p>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Then click <strong>Code Snippets &rarr; Header & Footer</strong>, paste this code into the <strong>Header</strong> box, and click Save!
+                </p>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-blue-100 shadow-sm space-y-2">
+                <div className="w-6 h-6 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center">
+                  2
+                </div>
+                <h4 className="font-bold text-slate-900 text-sm">Directly in Theme (header.php)</h4>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Alternatively, in WordPress Admin go to <strong>Appearance &rarr; Theme File Editor</strong>.
+                </p>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Open <code className="bg-slate-100 px-1 rounded font-mono">header.php</code>, paste the code right before the closing <code className="bg-slate-100 px-1 rounded font-mono">&lt;/head&gt;</code> tag, and save the file.
+                </p>
               </div>
             </div>
-          </>
-        )}
+          </div>
 
-      </div>
+        </div>
+      </main>
     </div>
   );
 }

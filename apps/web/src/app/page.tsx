@@ -48,7 +48,7 @@ export default function WorkspacePage() {
   const [recordingCount, setRecordingCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [copiedKey, setCopiedKey] = useState(false);
-  const [domain, setDomain] = useState('scanpe.in');
+  const [domain, setDomain] = useState('growinsight.co.in');
   const [apiKey, setApiKey] = useState('te_live_990c733a065d43b3b70bb0c1227d2f3c');
 
   // AI query state
@@ -105,7 +105,7 @@ export default function WorkspacePage() {
       if (projRes.ok) {
         const projects = await projRes.json();
         if (projects.length > 0) {
-          setDomain(projects[0].domain || 'scanpe.in');
+          setDomain(projects[0].domain || 'growinsight.co.in');
           if (projects[0].api_key) setApiKey(projects[0].api_key);
         }
       }

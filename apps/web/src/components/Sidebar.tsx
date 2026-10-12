@@ -17,6 +17,7 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { apiUrl } from '@/lib/api';
 
 interface NavGroup {
   label: string;
@@ -64,7 +65,7 @@ export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const [userEmail, setUserEmail] = useState('scan.pe.in@gmail.com');
-  const [domain, setDomain] = useState('scanpe.in');
+  const [domain, setDomain] = useState('growinsight.co.in');
 
   useEffect(() => {
     try {
@@ -72,6 +73,20 @@ export default function Sidebar() {
       if (storedUser) {
         const parsed = JSON.parse(storedUser);
         if (parsed.email) setUserEmail(parsed.email);
+      }
+
+      const token = localStorage.getItem('te_token');
+      if (token) {
+        fetch(apiUrl('/api/projects'), {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+          .then((res) => res.json())
+          .then((projs) => {
+            if (Array.isArray(projs) && projs.length > 0 && projs[0].domain) {
+              setDomain(projs[0].domain);
+            }
+          })
+          .catch(() => {});
       }
     } catch (e) {}
   }, []);
