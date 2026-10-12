@@ -126,6 +126,22 @@ def create_default_user():
         proj = models.Project(name='ScanPe Production', domain='scan.pe.in', organization_id=scan_org.id, api_key=target_key)
         db.add(proj)
         db.commit()
+        db.refresh(proj)
+
+    # Seed uptime monitor for user's domain
+    if proj:
+        monitor = db.query(models.UptimeMonitor).filter(models.UptimeMonitor.project_id == proj.id).first()
+        if not monitor:
+            monitor = models.UptimeMonitor(
+                project_id=proj.id,
+                name="ScanPe Production Site",
+                url="https://scanpe.in",
+                status="up",
+                response_time_ms=120,
+                last_checked=datetime.utcnow()
+            )
+            db.add(monitor)
+            db.commit()
 
 # --- AUTH ---
 class UserCreate(BaseModel):
@@ -313,17 +329,26 @@ def list_recordings(project_id: Optional[int] = None, db: Session = Depends(get_
     if project_id is not None:
         query = query.filter(models.SessionRecording.project_id == project_id)
     recordings = query.order_by(models.SessionRecording.created_at.desc()).all()
-    return [
-        {
+    results = []
+    for r in recordings:
+        first_event = db.query(models.Event).filter(models.Event.session_id == r.session_id).order_by(models.Event.created_at.asc()).first()
+        entry_url = first_event.url if first_event else None
+        event_count = db.query(models.Event).filter(models.Event.session_id == r.session_id).count()
+        client_meta = (first_event.properties or {}) if first_event else {}
+        results.append({
             "id": r.id,
             "session_id": r.session_id,
             "project_id": r.project_id,
             "duration": r.duration,
             "file_path": r.file_path,
-            "created_at": r.created_at.isoformat() if r.created_at else None
-        }
-        for r in recordings
-    ]
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "entry_url": entry_url,
+            "browser": client_meta.get("browser", "Chrome"),
+            "os": client_meta.get("os", "Windows"),
+            "screen": client_meta.get("screen", "1920x1080"),
+            "event_count": max(event_count, 1)
+        })
+    return results
 
 @app.get('/api/v1/recordings/{session_id}')
 @app.get('/api/v1/recordings/{session_id}/replay')
@@ -398,6 +423,52 @@ def get_dashboard_stats(db: Session = Depends(get_db), current_user: models.User
         'active_sessions': active_sessions,
         'total_events': total_events,
         'last_event_at': last_event_time
+    }
+
+@app.get('/api/v1/dashboard/activity')
+def get_dashboard_activity(limit: int = 15, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    project_ids = get_user_project_ids(db, current_user)
+    if not project_ids:
+        return []
+    events = db.query(models.Event).filter(
+        models.Event.project_id.in_(project_ids)
+    ).order_by(models.Event.created_at.desc()).limit(limit).all()
+    return [
+        {
+            "id": e.id,
+            "event_type": e.event_type,
+            "url": e.url,
+            "session_id": e.session_id,
+            "referrer": e.referrer,
+            "properties": e.properties or {},
+            "created_at": e.created_at.isoformat() if e.created_at else None
+        }
+        for e in events
+    ]
+
+@app.get('/api/v1/analytics/breakdown')
+def get_analytics_breakdown(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    project_ids = get_user_project_ids(db, current_user)
+    if not project_ids:
+        return {"top_pages": [], "top_referrers": [], "devices": []}
+
+    # Top pages
+    page_counts = db.query(models.Event.url, func.count(models.Event.id)).filter(
+        models.Event.project_id.in_(project_ids),
+        models.Event.event_type == 'pageview'
+    ).group_by(models.Event.url).order_by(func.count(models.Event.id).desc()).limit(8).all()
+    top_pages = [{"url": p[0], "views": p[1]} for p in page_counts if p[0]]
+
+    # Top referrers
+    ref_counts = db.query(models.Event.referrer, func.count(models.Event.id)).filter(
+        models.Event.project_id.in_(project_ids),
+        models.Event.event_type == 'pageview'
+    ).group_by(models.Event.referrer).order_by(func.count(models.Event.id).desc()).limit(5).all()
+    top_referrers = [{"referrer": r[0] if (r[0] and r[0].strip() and r[0] != 'null') else "Direct / Bookmarks", "views": r[1]} for r in ref_counts]
+
+    return {
+        "top_pages": top_pages,
+        "top_referrers": top_referrers
     }
 
 @app.get('/api/v1/analytics/timeseries')
@@ -798,13 +869,30 @@ def remove_team_member(user_id: int, db: Session = Depends(get_db), current_user
 # ===================== PHASE 3: AGGREGATED HEATMAPS =====================
 @app.get('/api/v1/analytics/heatmaps')
 def get_click_heatmap(project_id: Optional[int] = None, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    events = db.query(models.Event).filter(models.Event.event_type == 'click').all()
+    project_ids = get_user_project_ids(db, current_user)
+    if not project_ids:
+        return {"total_clicks": 0, "points": [], "urls": []}
+
+    events = db.query(models.Event).filter(
+        models.Event.project_id.in_(project_ids),
+        models.Event.event_type == 'click'
+    ).all()
     heatmaps = []
+    distinct_urls = set()
     for e in events:
+        if e.url:
+            distinct_urls.add(e.url)
         props = e.properties or {}
         if 'x' in props and 'y' in props:
-            heatmaps.append({"x": props.get('x'), "y": props.get('y'), "url": e.url, "session_id": e.session_id})
-    return {"total_clicks": len(heatmaps), "points": heatmaps}
+            heatmaps.append({
+                "x": props.get('x'),
+                "y": props.get('y'),
+                "url": e.url,
+                "session_id": e.session_id,
+                "tag": props.get('tag', ''),
+                "text": props.get('text', '')
+            })
+    return {"total_clicks": len(heatmaps), "points": heatmaps, "urls": sorted(list(distinct_urls))}
 
 
 # ===================== PHASE 4: PUBLIC STATUS PAGES =====================

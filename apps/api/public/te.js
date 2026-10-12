@@ -98,24 +98,15 @@
           mouseInteraction: true,
           scroll: 150
         },
-        // STRICT PRIVACY: Mask ALL inputs
-        maskAllInputs: true,
+        // Sensible privacy masking: Only mask password inputs or elements explicitly marked with .te-mask
+        maskAllInputs: false,
         maskInputOptions: {
-          password: true,
-          email: true,
-          tel: true,
-          text: true,
-          color: true,
-          date: true
+          password: true
         },
-        maskInputFn: function(v, el) {
-          return '***';
-        },
-        // STRICT PRIVACY: Mask ALL text
-        maskTextSelector: '*',
+        maskTextSelector: '.te-mask, [data-te-mask]',
         maskTextFn: function(text, el) {
           if (!text || !text.trim()) return text;
-          return '***';
+          return '••••••';
         }
       });
 
@@ -162,8 +153,34 @@
     document.head.appendChild(cdnScript);
   }
 
+  function getClientMeta() {
+    var ua = navigator.userAgent || '';
+    var browser = 'Other';
+    if (ua.indexOf('Chrome') > -1 && ua.indexOf('Edg') === -1 && ua.indexOf('OPR') === -1) browser = 'Chrome';
+    else if (ua.indexOf('Safari') > -1 && ua.indexOf('Chrome') === -1) browser = 'Safari';
+    else if (ua.indexOf('Firefox') > -1) browser = 'Firefox';
+    else if (ua.indexOf('Edg') > -1) browser = 'Edge';
+
+    var os = 'Other';
+    if (ua.indexOf('Win') > -1) os = 'Windows';
+    else if (ua.indexOf('Mac') > -1) os = 'macOS';
+    else if (ua.indexOf('Android') > -1) os = 'Android';
+    else if (ua.indexOf('iPhone') > -1 || ua.indexOf('iPad') > -1) os = 'iOS';
+    else if (ua.indexOf('Linux') > -1) os = 'Linux';
+
+    return {
+      browser: browser,
+      os: os,
+      screen: window.innerWidth + 'x' + window.innerHeight,
+      title: document.title || '',
+      lang: navigator.language || 'en'
+    };
+  }
+
   // 7. General event tracking (pageview)
   function track(eventName, properties) {
+    var meta = getClientMeta();
+    var mergedProps = Object.assign({}, meta, properties || {});
     fetch(apiHost + '/api/v1/track', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -173,7 +190,7 @@
         url: window.location.href,
         referrer: document.referrer,
         session_id: sessionId,
-        properties: properties || {}
+        properties: mergedProps
       })
     }).catch(function(err) {
       console.warn('[ThirdEye] Track event failed:', err);

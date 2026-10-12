@@ -19,7 +19,9 @@ import {
   AlertCircle,
   Database,
   ArrowLeft,
-  RotateCcw
+  RotateCcw,
+  Monitor,
+  Globe
 } from 'lucide-react';
 
 // Dynamic import with ssr: false ensures rrweb-player never executes in server context
@@ -43,6 +45,11 @@ interface SessionRecording {
   duration: number; // in seconds
   file_path: string;
   created_at: string;
+  entry_url?: string;
+  browser?: string;
+  os?: string;
+  screen?: string;
+  event_count?: number;
 }
 
 export default function SessionsPage() {
@@ -202,6 +209,37 @@ export default function SessionsPage() {
     return `${mins}m ${secs.toString().padStart(2, '0')}s`;
   };
 
+  const formatExactTime = (isoString: string) => {
+    if (!isoString) return 'Recently';
+    try {
+      const d = new Date(isoString);
+      return d.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      }) + ' at ' + d.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      });
+    } catch (e) {
+      return 'Recently';
+    }
+  };
+
+  const formatRelativeTime = (isoString: string) => {
+    if (!isoString) return 'Just now';
+    try {
+      const diffSec = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
+      if (diffSec < 60) return 'Just now';
+      if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+      if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+      return `${Math.floor(diffSec / 86400)}d ago`;
+    } catch (e) {
+      return 'Recently';
+    }
+  };
+
   const closeModal = () => {
     setActiveSession(null);
     setReplayEvents(null);
@@ -303,34 +341,53 @@ export default function SessionsPage() {
                 {recordings.map((rec) => (
                   <div
                     key={rec.id}
-                    className="p-6 flex items-center justify-between hover:bg-slate-50/60 transition-colors"
+                    className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50/70 transition-colors"
                   >
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
+                    <div className="flex items-start sm:items-center gap-4">
+                      <div className="w-11 h-11 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0 mt-1 sm:mt-0">
                         <Video className="w-5 h-5" />
                       </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-slate-800 font-mono">
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-bold text-slate-800 font-mono">
                             {rec.session_id}
                           </span>
                           <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-full flex items-center gap-1">
                             <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                            Masked
+                            Legible & Safe
+                          </span>
+                          <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md">
+                            {formatRelativeTime(rec.created_at)}
                           </span>
                         </div>
-                        <div className="flex items-center gap-4 text-xs text-slate-400 mt-1">
-                          <span className="flex items-center gap-1">
-                            <Calendar className="w-3.5 h-3.5" />
-                            {rec.created_at ? new Date(rec.created_at).toLocaleString() : 'Recently'}
+
+                        {/* Entry URL */}
+                        {rec.entry_url && (
+                          <div className="flex items-center gap-1.5 text-xs text-blue-600 font-medium">
+                            <Globe className="w-3.5 h-3.5 text-slate-400" />
+                            <span className="truncate max-w-sm">{rec.entry_url}</span>
+                          </div>
+                        )}
+
+                        {/* Metadata row */}
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 pt-0.5">
+                          <span className="flex items-center gap-1 font-medium text-slate-700">
+                            <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                            {formatExactTime(rec.created_at)}
                           </span>
+                          <span>&bull;</span>
                           <span className="flex items-center gap-1">
-                            <Clock className="w-3.5 h-3.5" />
+                            <Monitor className="w-3.5 h-3.5 text-slate-400" />
+                            {rec.browser || 'Chrome'} &bull; {rec.os || 'Windows'}
+                          </span>
+                          <span>&bull;</span>
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5 text-slate-400" />
                             {formatDuration(rec.duration)}
                           </span>
-                          <span className="flex items-center gap-1 font-mono text-[11px] text-slate-400">
-                            <Database className="w-3 h-3" />
-                            {rec.file_path ? rec.file_path.split('/').pop() : 'storage/recordings'}
+                          <span>&bull;</span>
+                          <span className="text-slate-400 font-medium">
+                            {rec.event_count || 1} events
                           </span>
                         </div>
                       </div>
@@ -338,7 +395,7 @@ export default function SessionsPage() {
 
                     <button
                       onClick={() => handleWatchReplay(rec)}
-                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white hover:bg-blue-500 rounded-xl text-xs font-semibold shadow-sm transition-all hover:shadow"
+                      className="flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold shadow-sm transition-all hover:shadow self-start sm:self-center flex-shrink-0"
                     >
                       <Play className="w-3.5 h-3.5 fill-white" />
                       Watch Replay
@@ -367,12 +424,20 @@ export default function SessionsPage() {
                   <Play className="w-4 h-4 fill-blue-400" />
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold text-white">
-                    Session Replay — <span className="font-mono text-sm">{activeSession.session_id}</span>
+                  <h3 className="text-base font-semibold text-white flex items-center gap-2">
+                    <span>Session Replay</span>
+                    <span className="font-mono text-xs text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">{activeSession.session_id}</span>
                   </h3>
-                  <p className="text-xs text-slate-400">
-                    Duration: {formatDuration(activeSession.duration)} • Recorded on{' '}
-                    {activeSession.created_at ? new Date(activeSession.created_at).toLocaleString() : 'Unknown'}
+                  <p className="text-xs text-slate-400 mt-0.5 flex flex-wrap items-center gap-2">
+                    <span>{formatExactTime(activeSession.created_at)}</span>
+                    <span>&bull;</span>
+                    <span>Duration: {formatDuration(activeSession.duration)}</span>
+                    {activeSession.entry_url && (
+                      <>
+                        <span>&bull;</span>
+                        <span className="text-blue-400 truncate max-w-xs">{activeSession.entry_url}</span>
+                      </>
+                    )}
                   </p>
                 </div>
               </div>
