@@ -33,6 +33,9 @@
       session_id: sessionId,
       api_key: apiKey,
       duration: duration,
+      url: window.location.href,
+      referrer: document.referrer || '',
+      meta: getClientMeta(),
       events: batch
     };
 
@@ -58,6 +61,9 @@
       session_id: sessionId,
       api_key: apiKey,
       duration: duration,
+      url: window.location.href,
+      referrer: document.referrer || '',
+      meta: getClientMeta(),
       events: batch
     });
 
@@ -177,23 +183,23 @@
     };
   }
 
-  // 7. General event tracking (pageview)
+  // 7. General event tracking (pageview & click via adblock-resilient /api/v1/collect)
   function track(eventName, properties) {
     var meta = getClientMeta();
     var mergedProps = Object.assign({}, meta, properties || {});
-    fetch(apiHost + '/api/v1/track', {
+    fetch(apiHost + '/api/v1/collect', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         api_key: apiKey,
         event_type: eventName,
         url: window.location.href,
-        referrer: document.referrer,
+        referrer: document.referrer || '',
         session_id: sessionId,
         properties: mergedProps
       })
     }).catch(function(err) {
-      console.warn('[ThirdEye] Track event failed:', err);
+      console.warn('[ThirdEye] Collect event failed:', err);
     });
   }
 

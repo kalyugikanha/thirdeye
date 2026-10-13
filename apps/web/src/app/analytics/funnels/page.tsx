@@ -30,7 +30,7 @@ export default function FunnelsPage() {
 
   // Form state
   const [name, setName] = useState('');
-  const [stepsInput, setStepsInput] = useState('/, /pricing, /register');
+  const [stepsInput, setStepsInput] = useState('https://growinsight.co.in/, /about-us/, /contact/');
   const [creating, setCreating] = useState(false);
   const [projectId, setProjectId] = useState<number | null>(null);
   const router = useRouter();
