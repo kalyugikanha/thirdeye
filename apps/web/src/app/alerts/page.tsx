@@ -2,11 +2,19 @@
 
 import Sidebar from '@/components/Sidebar';
 import { apiUrl } from '@/lib/api';
-
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { LayoutTemplate, BarChart, ShieldCheck, Activity, Bell, Search, TrendingUp, Check, AlertTriangle, AlertCircle, Info } from 'lucide-react';
-import Link from 'next/link';
+import { 
+  Bell, 
+  Check, 
+  AlertTriangle, 
+  AlertCircle, 
+  Info, 
+  RefreshCw,
+  Sparkles,
+  Loader2,
+  CheckCheck
+} from 'lucide-react';
 
 interface Notification {
   id: number;
@@ -20,6 +28,7 @@ interface Notification {
 export default function AlertsPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sendingTest, setSendingTest] = useState(false);
   const router = useRouter();
 
   const fetchNotifications = async () => {
@@ -30,7 +39,7 @@ export default function AlertsPage() {
     }
     try {
       const res = await fetch(apiUrl('/api/v1/notifications'), {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` }
       });
       if (res.status === 401) {
         localStorage.removeItem('te_token');
@@ -55,7 +64,7 @@ export default function AlertsPage() {
     try {
       await fetch(apiUrl(`/api/v1/notifications/${id}/read`), {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` }
       });
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
     } catch (err) {
@@ -63,56 +72,125 @@ export default function AlertsPage() {
     }
   };
 
+  const handleMarkAllRead = async () => {
+    const unread = notifications.filter(n => !n.is_read);
+    for (const n of unread) {
+      handleMarkRead(n.id);
+    }
+  };
+
+  const handleSendTest = async () => {
+    setSendingTest(true);
+    const token = localStorage.getItem('te_token');
+    try {
+      // Trigger a monitor check on monitor 1 which creates an alert if needed, or dispatch alert
+      await fetch(apiUrl('/api/v1/monitors/1/check'), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      await fetchNotifications();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSendingTest(false);
+    }
+  };
+
+  const unreadCount = notifications.filter(n => !n.is_read).length;
+
   return (
-    <div className="flex min-h-screen bg-white text-slate-900 font-sans selection:bg-blue-100">
+    <div className="flex min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-blue-100">
       <Sidebar />
 
-      <main className="flex-1 flex flex-col pt-8 px-10 overflow-y-auto">
-        <div className="w-full max-w-5xl mx-auto flex flex-col gap-8 pb-12">
+      <main className="flex-1 flex flex-col pt-8 px-8 lg:px-12 overflow-y-auto">
+        <div className="w-full max-w-6xl mx-auto flex flex-col gap-8 pb-16">
           
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">Notifications & Alerts Center</h1>
-              <p className="text-sm text-slate-500 mt-1">Real-time alerts for server downtimes, threshold triggers, and system events.</p>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-bold uppercase tracking-wider text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200">
+                  System Telemetry
+                </span>
+                {unreadCount > 0 && (
+                  <span className="text-xs font-bold bg-rose-50 text-rose-600 px-2 py-0.5 rounded-full border border-rose-200">
+                    {unreadCount} unread
+                  </span>
+                )}
+              </div>
+              <h1 className="text-2xl lg:text-3xl font-extrabold tracking-tight text-slate-900">
+                Alerts & Notifications Hub
+              </h1>
+              <p className="text-xs text-slate-500 mt-1">
+                Real-time security events, uptime alerts, and live tracking status notifications.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              {unreadCount > 0 && (
+                <button
+                  onClick={handleMarkAllRead}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-colors"
+                >
+                  <CheckCheck className="w-3.5 h-3.5 text-slate-500" />
+                  Mark All Read
+                </button>
+              )}
+              <button
+                onClick={handleSendTest}
+                disabled={sendingTest}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-sm transition-colors disabled:opacity-50"
+              >
+                {sendingTest ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                {sendingTest ? 'Running Check...' : 'Run Diagnostics Check'}
+              </button>
             </div>
           </div>
 
           <div className="flex flex-col gap-4">
             {loading ? (
-              <div className="p-8 text-center text-slate-400 text-sm">Loading notifications...</div>
+              <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center text-slate-400 text-xs">
+                <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-slate-300" />
+                Loading system notifications...
+              </div>
             ) : notifications.length === 0 ? (
-              <div className="bg-white border border-dashed border-slate-200 rounded-2xl p-12 text-center text-slate-500 text-sm flex flex-col items-center gap-3">
-                <Bell className="w-8 h-8 text-slate-300" />
-                <p className="font-medium text-slate-700">No alerts right now</p>
-                <p className="text-xs text-slate-400">System alerts and uptime failure notifications will appear here.</p>
+              <div className="bg-white border border-dashed border-slate-200 rounded-3xl p-12 text-center text-slate-500">
+                <Bell className="w-8 h-8 text-slate-300 mx-auto mb-3" />
+                <p className="text-sm font-bold text-slate-700">No active alerts</p>
+                <p className="text-xs text-slate-400 mt-1">System health, downtime notices, and security triggers will appear here.</p>
               </div>
             ) : (
               <div className="grid gap-3">
                 {notifications.map((n) => (
                   <div
                     key={n.id}
-                    className={`border rounded-2xl p-4 flex items-start justify-between gap-4 transition-all ${
-                      n.is_read ? 'bg-white border-slate-100 opacity-75' : 'bg-slate-50 border-slate-200 font-medium'
+                    className={`rounded-2xl p-5 flex items-start justify-between gap-4 transition-all border shadow-sm ${
+                      n.is_read ? 'bg-white border-slate-200/60 opacity-80' : 'bg-white border-slate-200 ring-1 ring-blue-500/10'
                     }`}
                   >
-                    <div className="flex items-start gap-3">
+                    <div className="flex items-start gap-3.5">
                       {n.type === 'error' ? (
-                        <div className="w-9 h-9 rounded-xl bg-red-100 text-red-600 flex items-center justify-center flex-shrink-0">
+                        <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-200 flex-shrink-0">
                           <AlertCircle className="w-5 h-5" />
                         </div>
                       ) : n.type === 'warning' ? (
-                        <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center flex-shrink-0">
+                        <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-200 flex-shrink-0">
                           <AlertTriangle className="w-5 h-5" />
                         </div>
                       ) : (
-                        <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center flex-shrink-0">
+                        <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-200 flex-shrink-0">
                           <Info className="w-5 h-5" />
                         </div>
                       )}
+
                       <div>
-                        <h3 className="text-sm font-semibold text-slate-900">{n.title}</h3>
-                        <p className="text-xs text-slate-600 mt-0.5">{n.message}</p>
-                        <span className="text-[10px] text-slate-400 mt-1 block">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-sm font-extrabold text-slate-900 tracking-tight">{n.title}</h3>
+                          {!n.is_read && (
+                            <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-600 mt-1 leading-relaxed">{n.message}</p>
+                        <span className="text-[10px] text-slate-400 mt-2 block font-medium">
                           {new Date(n.created_at).toLocaleString()}
                         </span>
                       </div>
@@ -121,9 +199,9 @@ export default function AlertsPage() {
                     {!n.is_read && (
                       <button
                         onClick={() => handleMarkRead(n.id)}
-                        className="text-xs font-medium text-slate-600 hover:text-blue-600 bg-white border border-slate-200 px-3 py-1 rounded-full flex items-center gap-1 hover:border-blue-200 transition-colors flex-shrink-0"
+                        className="text-xs font-bold text-slate-600 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 border border-slate-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-colors flex-shrink-0"
                       >
-                        <Check className="w-3.5 h-3.5" /> Mark read
+                        <Check className="w-3.5 h-3.5" /> Mark Read
                       </button>
                     )}
                   </div>

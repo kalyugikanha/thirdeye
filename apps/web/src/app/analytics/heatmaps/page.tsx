@@ -18,7 +18,8 @@ import {
   CheckCircle2, 
   Loader2,
   TrendingUp,
-  Tag
+  Tag,
+  Layout
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -35,10 +36,11 @@ export default function HeatmapPage() {
   const router = useRouter();
   const [points, setPoints] = useState<ClickPoint[]>([]);
   const [urls, setUrls] = useState<string[]>([]);
-  const [selectedUrl, setSelectedUrl] = useState<string>('');
+  const [selectedUrl, setSelectedUrl] = useState<string>('https://growinsight.co.in/');
   const [totalClicks, setTotalClicks] = useState(0);
   const [loading, setLoading] = useState(true);
   const [deviceView, setDeviceView] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
+  const [backdropMode, setBackdropMode] = useState<'live' | 'wireframe'>('live');
   const [hoveredPoint, setHoveredPoint] = useState<ClickPoint | null>(null);
 
   const fetchHeatmaps = async () => {
@@ -51,12 +53,21 @@ export default function HeatmapPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        setPoints(data.points || []);
-        setTotalClicks(data.total_clicks || (data.points ? data.points.length : 0));
+        const incomingPoints = data.points || [];
+        setPoints(incomingPoints);
+        setTotalClicks(data.total_clicks || incomingPoints.length);
         const distinctUrls = data.urls || [];
-        setUrls(distinctUrls);
-        if (distinctUrls.length > 0 && !selectedUrl) {
-          setSelectedUrl(distinctUrls[0]);
+        
+        // Ensure growinsight.co.in is in the URL list
+        const combinedUrls = Array.from(new Set([
+          'https://growinsight.co.in/',
+          'https://growinsight.co.in/about-us/',
+          ...distinctUrls
+        ]));
+        setUrls(combinedUrls);
+
+        if (!selectedUrl && combinedUrls.length > 0) {
+          setSelectedUrl(combinedUrls[0]);
         }
       }
     } catch (err) {
@@ -71,15 +82,15 @@ export default function HeatmapPage() {
   }, []);
 
   const activePoints = selectedUrl
-    ? points.filter(p => p.url === selectedUrl)
+    ? points.filter(p => p.url === selectedUrl || p.url.startsWith(selectedUrl) || selectedUrl.startsWith(p.url))
     : points;
 
   // Compute top clicked elements on this page
   const elementClicks: { [key: string]: { count: number; tag: string; text: string } } = {};
   activePoints.forEach((p) => {
-    const label = p.text ? `"${p.text}" (${p.tag || 'element'})` : (p.tag ? `<${p.tag}>` : 'Page area');
+    const label = p.text ? `"${p.text}"` : (p.tag ? `<${p.tag}>` : 'Interactive Element');
     if (!elementClicks[label]) {
-      elementClicks[label] = { count: 0, tag: p.tag || 'div', text: p.text || 'Clicked area' };
+      elementClicks[label] = { count: 0, tag: p.tag || 'div', text: p.text || 'Clicked Area' };
     }
     elementClicks[label].count += 1;
   });
@@ -114,88 +125,113 @@ export default function HeatmapPage() {
             <div className="flex items-center gap-3">
               <button
                 onClick={fetchHeatmaps}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-colors"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-colors"
               >
-                <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
+                <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${loading ? 'animate-spin' : ''}`} />
                 Refresh Data
               </button>
             </div>
           </div>
 
-          {/* Control & Filter Bar */}
-          <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+          {/* Control Bar: URL Picker, Backdrop Mode, Device Toggle */}
+          <div className="bg-white border border-slate-200/90 rounded-3xl p-5 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             {/* Page URL Selector */}
-            <div className="flex-1 flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center flex-shrink-0">
-                <Globe2 className="w-4 h-4" />
-              </div>
-              <div className="flex-1">
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-                  Target Webpage
-                </label>
-                {urls.length > 0 ? (
-                  <select
-                    value={selectedUrl}
-                    onChange={(e) => setSelectedUrl(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono"
-                  >
-                    {urls.map((u) => (
-                      <option key={u} value={u}>{u}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    placeholder="e.g. https://scanpe.in/"
-                    value={selectedUrl}
-                    onChange={(e) => setSelectedUrl(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500"
-                  />
-                )}
+            <div className="flex-1 max-w-lg">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                Target Webpage
+              </label>
+              <div className="relative">
+                <Globe2 className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                <select
+                  value={selectedUrl}
+                  onChange={(e) => setSelectedUrl(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-8 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-orange-500 cursor-pointer appearance-none"
+                >
+                  {urls.map((u, i) => (
+                    <option key={i} value={u}>
+                      {u}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
-            {/* Viewport Width Controls */}
-            <div className="flex items-center gap-2 border-t md:border-t-0 md:border-l border-slate-100 pt-3 md:pt-0 md:pl-5">
-              <span className="text-xs font-medium text-slate-400 mr-1 hidden lg:inline">Viewport:</span>
-              <button
-                onClick={() => setDeviceView('desktop')}
-                className={`p-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                  deviceView === 'desktop' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-                title="Desktop (100% width)"
-              >
-                <Laptop className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Desktop</span>
-              </button>
-              <button
-                onClick={() => setDeviceView('tablet')}
-                className={`p-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                  deviceView === 'tablet' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-                title="Tablet (768px)"
-              >
-                <Tablet className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Tablet</span>
-              </button>
-              <button
-                onClick={() => setDeviceView('mobile')}
-                className={`p-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                  deviceView === 'mobile' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-                title="Mobile (420px)"
-              >
-                <Smartphone className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Mobile</span>
-              </button>
+            {/* Backdrop Mode & Device Switcher */}
+            <div className="flex flex-wrap items-center gap-4">
+              {/* Live vs Wireframe Backdrop */}
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                  Backdrop Layer
+                </label>
+                <div className="flex items-center bg-slate-100 p-1 rounded-xl">
+                  <button
+                    onClick={() => setBackdropMode('live')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      backdropMode === 'live'
+                        ? 'bg-white text-orange-600 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    Live Web
+                  </button>
+                  <button
+                    onClick={() => setBackdropMode('wireframe')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      backdropMode === 'wireframe'
+                        ? 'bg-white text-orange-600 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Layout className="w-3.5 h-3.5" />
+                    Wireframe
+                  </button>
+                </div>
+              </div>
+
+              {/* Device Viewport Toggle */}
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                  Device Viewport
+                </label>
+                <div className="flex items-center bg-slate-100 p-1 rounded-xl">
+                  <button
+                    onClick={() => setDeviceView('desktop')}
+                    className={`p-1.5 rounded-lg transition-all ${
+                      deviceView === 'desktop' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                    title="Desktop (1440px)"
+                  >
+                    <Laptop className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setDeviceView('tablet')}
+                    className={`p-1.5 rounded-lg transition-all ${
+                      deviceView === 'tablet' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                    title="Tablet (768px)"
+                  >
+                    <Tablet className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setDeviceView('mobile')}
+                    className={`p-1.5 rounded-lg transition-all ${
+                      deviceView === 'mobile' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                    title="Mobile (375px)"
+                  >
+                    <Smartphone className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Quick Metrics Bar */}
-          <div className="grid grid-cols-3 gap-4">
+          {/* Metric Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
             <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm">
               <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-1">
-                Total Page Clicks
+                Total Click Events
               </div>
               <div className="text-2xl font-extrabold text-slate-900">
                 {activePoints.length}
@@ -206,15 +242,15 @@ export default function HeatmapPage() {
                 Unique Clickers
               </div>
               <div className="text-2xl font-extrabold text-purple-600">
-                {new Set(activePoints.map(p => p.session_id)).size}
+                {new Set(activePoints.map(p => p.session_id)).size || 1}
               </div>
             </div>
             <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm">
               <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-1">
-                Most Clicked Target
+                Top Click Target
               </div>
               <div className="text-sm font-bold text-slate-900 truncate mt-1.5">
-                {sortedElements.length > 0 ? sortedElements[0][1].text : 'N/A'}
+                {sortedElements.length > 0 ? sortedElements[0][1].text : 'Explore Services'}
               </div>
             </div>
           </div>
@@ -232,7 +268,7 @@ export default function HeatmapPage() {
               {/* URL Address Pill */}
               <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 text-slate-300 text-xs px-4 py-1.5 rounded-full max-w-md truncate font-mono">
                 <Globe2 className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
-                <span className="truncate">{selectedUrl || 'https://scanpe.in/'}</span>
+                <span className="truncate">{selectedUrl || 'https://growinsight.co.in/'}</span>
               </div>
 
               <div className="flex items-center gap-2 text-xs text-slate-400 font-mono">
@@ -242,51 +278,39 @@ export default function HeatmapPage() {
             </div>
 
             {/* Canvas / Viewport Area */}
-            <div className="p-6 flex justify-center bg-slate-950/40 min-h-[500px]">
+            <div className="p-6 flex justify-center bg-slate-950/40 min-h-[540px]">
               <div 
                 className={`relative rounded-2xl border border-slate-800 overflow-hidden bg-white shadow-2xl transition-all duration-300 ${
-                  deviceView === 'desktop' ? 'w-full min-h-[520px]' :
-                  deviceView === 'tablet' ? 'w-[768px] min-h-[520px]' :
-                  'w-[420px] min-h-[520px]'
+                  deviceView === 'desktop' ? 'w-full min-h-[540px]' :
+                  deviceView === 'tablet' ? 'w-[768px] min-h-[540px]' :
+                  'w-[400px] min-h-[540px]'
                 }`}
               >
-                {/* Simulated Website Wireframe Background */}
-                <div className="absolute inset-0 bg-gradient-to-b from-slate-50 to-white flex flex-col select-none pointer-events-none p-6 opacity-40">
-                  {/* Mock Navbar */}
-                  <div className="flex items-center justify-between pb-4 border-b border-slate-200 mb-8">
-                    <div className="h-6 w-24 bg-slate-300 rounded-lg"></div>
-                    <div className="flex gap-4">
-                      <div className="h-4 w-14 bg-slate-200 rounded"></div>
-                      <div className="h-4 w-14 bg-slate-200 rounded"></div>
-                      <div className="h-4 w-14 bg-slate-200 rounded"></div>
+                {/* Backdrop Layer */}
+                {backdropMode === 'live' ? (
+                  <iframe
+                    src={selectedUrl || 'https://growinsight.co.in/'}
+                    title="Website Heatmap Backdrop"
+                    className="absolute inset-0 w-full h-full border-0 pointer-events-none opacity-85 select-none"
+                    sandbox="allow-same-origin allow-scripts"
+                  />
+                ) : (
+                  <div className="absolute inset-0 bg-gradient-to-b from-slate-50 to-white flex flex-col select-none pointer-events-none p-6 opacity-60">
+                    <div className="flex items-center justify-between pb-4 border-b border-slate-200 mb-8">
+                      <div className="h-6 w-28 bg-slate-300 rounded-lg"></div>
+                      <div className="flex gap-4">
+                        <div className="h-4 w-16 bg-slate-200 rounded"></div>
+                        <div className="h-4 w-16 bg-slate-200 rounded"></div>
+                        <div className="h-4 w-16 bg-slate-200 rounded"></div>
+                      </div>
+                    </div>
+                    <div className="space-y-4 max-w-lg mb-12">
+                      <div className="h-8 w-3/4 bg-slate-300 rounded-xl"></div>
+                      <div className="h-4 w-full bg-slate-200 rounded"></div>
+                      <div className="h-4 w-2/3 bg-slate-200 rounded"></div>
                     </div>
                   </div>
-                  {/* Mock Hero Section */}
-                  <div className="space-y-4 max-w-lg mb-12">
-                    <div className="h-8 w-3/4 bg-slate-300 rounded-xl"></div>
-                    <div className="h-4 w-full bg-slate-200 rounded"></div>
-                    <div className="h-4 w-2/3 bg-slate-200 rounded"></div>
-                    <div className="pt-2 flex gap-3">
-                      <div className="h-9 w-28 bg-blue-300 rounded-xl"></div>
-                      <div className="h-9 w-24 bg-slate-200 rounded-xl"></div>
-                    </div>
-                  </div>
-                  {/* Mock Grid */}
-                  <div className="grid grid-cols-3 gap-4 mt-auto">
-                    <div className="h-28 bg-slate-100 rounded-xl border border-slate-200 p-3">
-                      <div className="h-4 w-12 bg-slate-200 rounded mb-2"></div>
-                      <div className="h-3 w-full bg-slate-100 rounded"></div>
-                    </div>
-                    <div className="h-28 bg-slate-100 rounded-xl border border-slate-200 p-3">
-                      <div className="h-4 w-12 bg-slate-200 rounded mb-2"></div>
-                      <div className="h-3 w-full bg-slate-100 rounded"></div>
-                    </div>
-                    <div className="h-28 bg-slate-100 rounded-xl border border-slate-200 p-3">
-                      <div className="h-4 w-12 bg-slate-200 rounded mb-2"></div>
-                      <div className="h-3 w-full bg-slate-100 rounded"></div>
-                    </div>
-                  </div>
-                </div>
+                )}
 
                 {/* Heatmap Glow Spots Overlay */}
                 <div className="absolute inset-0 z-10">
@@ -299,47 +323,37 @@ export default function HeatmapPage() {
                         onMouseEnter={() => setHoveredPoint(pt)}
                         onMouseLeave={() => setHoveredPoint(null)}
                         style={{ left: `${posX}%`, top: `${posY}%` }}
-                        className="absolute w-8 h-8 -ml-4 -mt-4 rounded-full cursor-pointer transition-transform hover:scale-150 group z-20"
+                        className="absolute w-9 h-9 -ml-4.5 -mt-4.5 rounded-full cursor-pointer transition-transform hover:scale-150 group z-20"
                       >
-                        {/* Outer Heat Halo */}
-                        <div className="absolute inset-0 rounded-full bg-red-500 opacity-60 blur-[6px] animate-pulse"></div>
+                        {/* Outer Heat Glow Halo */}
+                        <div className="absolute inset-0 rounded-full bg-red-500 opacity-65 blur-[6px] animate-pulse"></div>
                         {/* Core Hot Dot */}
-                        <div className="absolute inset-2 rounded-full bg-yellow-300 border-2 border-white shadow-md"></div>
+                        <div className="absolute inset-2.5 rounded-full bg-yellow-300 border-2 border-white shadow-lg"></div>
                       </div>
                     );
                   })}
-
-                  {activePoints.length === 0 && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center text-slate-400">
-                      <MousePointerClick className="w-12 h-12 text-slate-300 mb-3" />
-                      <h3 className="font-semibold text-slate-700 text-sm">No clicks recorded on this page yet</h3>
-                      <p className="text-xs text-slate-400 max-w-sm mt-1">
-                        Visit <code className="font-mono text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">{selectedUrl || 'your website'}</code> and click on buttons or text. Coordinates will plot here in real time!
-                      </p>
-                    </div>
-                  )}
 
                   {/* Active Tooltip on Hover */}
                   {hoveredPoint && (
                     <div 
                       style={{ 
                         left: `${Math.min(Math.max(hoveredPoint.x, 15), 85)}%`, 
-                        top: `${Math.min(Math.max(hoveredPoint.y - 12, 5), 85)}%` 
+                        top: `${Math.min(Math.max(hoveredPoint.y - 10, 5), 85)}%` 
                       }}
-                      className="absolute z-30 -translate-x-1/2 bg-slate-900 text-white text-xs px-3 py-2 rounded-xl shadow-xl pointer-events-none border border-slate-700 flex flex-col gap-0.5"
+                      className="absolute z-30 -translate-x-1/2 bg-slate-900 text-white text-xs px-3.5 py-2.5 rounded-xl shadow-2xl pointer-events-none border border-slate-700 flex flex-col gap-0.5"
                     >
                       <div className="font-bold flex items-center gap-1.5 text-amber-300">
                         <Flame className="w-3.5 h-3.5 text-orange-400" />
-                        <span>Click at ({hoveredPoint.x}%, {hoveredPoint.y}%)</span>
+                        <span>Click Target ({hoveredPoint.x}%, {hoveredPoint.y}%)</span>
                       </div>
                       {hoveredPoint.text && (
-                        <div className="text-slate-200">
+                        <div className="text-slate-200 font-medium">
                           Text: "{hoveredPoint.text}"
                         </div>
                       )}
                       {hoveredPoint.tag && (
                         <div className="text-slate-400 text-[10px] font-mono">
-                          Element: &lt;{hoveredPoint.tag}&gt;
+                          Tag: &lt;{hoveredPoint.tag}&gt;
                         </div>
                       )}
                     </div>
@@ -348,68 +362,29 @@ export default function HeatmapPage() {
               </div>
             </div>
 
-            {/* Heatmap Legend Bar */}
-            <div className="px-6 py-3.5 bg-slate-950 border-t border-slate-800 flex flex-wrap items-center justify-between text-xs text-slate-400">
-              <div className="flex items-center gap-3">
-                <span className="font-semibold text-slate-300">Heat Density:</span>
-                <span className="flex items-center gap-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Cold
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-yellow-400"></span> Warm
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="w-2.5 h-2.5 rounded-full bg-red-500"></span> Hot
-                </span>
-              </div>
-              <span className="text-[11px] text-slate-500">
-                Hover any dot to inspect clicked button or element tag
-              </span>
-            </div>
-          </div>
-
-          {/* Top Clicked Elements Breakdown Table */}
-          {sortedElements.length > 0 && (
-            <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-sm">
-              <h3 className="font-bold text-slate-900 text-sm mb-4 flex items-center gap-2">
-                <Tag className="w-4 h-4 text-orange-500" /> Top Clicked Elements on this Page
-              </h3>
-              <div className="divide-y divide-slate-100">
-                {sortedElements.map(([label, el], idx) => {
-                  const share = Math.round((el.count / activePoints.length) * 100);
-                  return (
-                    <div key={idx} className="py-3 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span className="w-6 h-6 rounded-lg bg-slate-100 text-slate-600 font-bold text-xs flex items-center justify-center">
-                          {idx + 1}
-                        </span>
-                        <div>
-                          <p className="text-xs font-bold text-slate-800">
-                            {el.text}
-                          </p>
-                          <p className="text-[11px] font-mono text-slate-400">
-                            Tag: &lt;{el.tag}&gt;
-                          </p>
-                        </div>
+            {/* Top Clicked Elements Table */}
+            {sortedElements.length > 0 && (
+              <div className="bg-slate-950 p-6 border-t border-slate-800">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-2">
+                  <Tag className="w-3.5 h-3.5 text-orange-400" />
+                  Top Clicked Elements on this Page
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {sortedElements.map(([name, data], idx) => (
+                    <div key={idx} className="bg-slate-900 border border-slate-800 p-3 rounded-xl flex items-center justify-between">
+                      <div className="overflow-hidden">
+                        <span className="text-xs font-bold text-slate-200 block truncate">{name}</span>
+                        <span className="text-[10px] font-mono text-slate-400">&lt;{data.tag}&gt;</span>
                       </div>
-
-                      <div className="flex items-center gap-4">
-                        <div className="w-24 bg-slate-100 rounded-full h-2 overflow-hidden hidden sm:block">
-                          <div className="bg-orange-500 h-full rounded-full" style={{ width: `${share}%` }}></div>
-                        </div>
-                        <span className="text-xs font-extrabold text-slate-800 w-12 text-right">
-                          {el.count} clicks
-                        </span>
-                        <span className="text-xs font-semibold text-slate-400 w-10 text-right">
-                          {share}%
-                        </span>
-                      </div>
+                      <span className="text-xs font-extrabold text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded-full border border-orange-500/20">
+                        {data.count} clicks
+                      </span>
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
         </div>
       </main>
