@@ -72,6 +72,27 @@ for _db_path in [BASE_DIR / "thirdeye.db", ROOT_DIR / "thirdeye.db"]:
 
 app = FastAPI(title='ThirdEye AI Workspace API')
 
+@app.middleware("http")
+async def cors_middleware(request: Request, call_next):
+    origin = request.headers.get("origin") or "*"
+    if request.method == "OPTIONS":
+        res = Response(status_code=200)
+    else:
+        try:
+            res = await call_next(request)
+        except Exception as exc:
+            res = Response(
+                content=json.dumps({"detail": str(exc)}),
+                status_code=500,
+                media_type="application/json"
+            )
+
+    res.headers["Access-Control-Allow-Origin"] = origin
+    res.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD"
+    res.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept, Origin, User-Agent, X-Requested-With, data-key"
+    res.headers["Access-Control-Allow-Credentials"] = "true"
+    return res
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=['*'],
