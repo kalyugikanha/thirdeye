@@ -282,7 +282,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     if not user or not auth.verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=400, detail='Incorrect email or password')
     access_token = auth.create_access_token(data={'sub': user.email})
-    return {'access_token': access_token, 'token_type': 'bearer', 'user': {'name': user.name, 'email': user.email, 'org_id': user.organization_id}}
+    return {'access_token': access_token, 'token_type': 'bearer', 'user': {'name': user.name, 'email': user.email, 'org_id': user.organization_id, 'role': user.role}}
 
 # --- EVENT INGESTION (Public, with /api/v1/collect alias for AdBlocker resilience) ---
 class EventCreate(BaseModel):
@@ -852,28 +852,101 @@ def get_github_commits(repo: str, db: Session = Depends(get_db), current_user: m
         print(e)
         return {'status': 'error', 'commits': [], 'message': str(e)}
 
-# --- SUPER ADMIN ---
+# --- SUPER ADMIN (Platform Control Center) ---
+@app.get('/api/v1/admin/stats')
+def get_super_admin_stats(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    if current_user.role != 'ADMIN':
+        raise HTTPException(status_code=403, detail='Super Admin only')
+    total_orgs = db.query(models.Organization).count()
+    total_projects = db.query(models.Project).count()
+    total_events = db.query(models.Event).count()
+    total_recordings = db.query(models.SessionRecording).count()
+    total_users = db.query(models.User).count()
+    total_connectors = db.query(models.Connector).count()
+    return {
+        'total_organizations': total_orgs,
+        'total_projects': total_projects,
+        'total_events': total_events,
+        'total_recordings': total_recordings,
+        'total_users': total_users,
+        'total_connectors': total_connectors,
+        'system_uptime': 100.0,
+        'system_status': 'Healthy'
+    }
+
 @app.get('/api/v1/admin/projects')
 def get_all_projects(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     if current_user.role != 'ADMIN':
         raise HTTPException(status_code=403, detail='Super Admin only')
     projects = db.query(models.Project).all()
-    return [{'id': p.id, 'name': p.name, 'domain': p.domain} for p in projects]
+    return [{'id': p.id, 'name': p.name, 'domain': p.domain, 'organization_id': p.organization_id} for p in projects]
 
-@app.get('/api/v1/admin/stats')
-def get_super_admin_stats(project_id: Optional[int] = None, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+@app.get('/api/v1/admin/tenants')
+def get_admin_tenants(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     if current_user.role != 'ADMIN':
         raise HTTPException(status_code=403, detail='Super Admin only')
-    if project_id:
-        total_events = db.query(models.Event).filter(models.Event.project_id == project_id).count()
-        total_connectors = db.query(models.Connector).filter(models.Connector.project_id == project_id).count()
-        return {'total_organizations': 1, 'total_projects': 1, 'total_events': total_events, 'total_connectors': total_connectors}
-    else:
-        total_orgs = db.query(models.Organization).count()
-        total_projects = db.query(models.Project).count()
-        total_events = db.query(models.Event).count()
-        total_connectors = db.query(models.Connector).count()
-        return {'total_organizations': total_orgs, 'total_projects': total_projects, 'total_events': total_events, 'total_connectors': total_connectors}
+    orgs = db.query(models.Organization).all()
+    results = []
+    for org in orgs:
+        org_projects = db.query(models.Project).filter(models.Project.organization_id == org.id).all()
+        projs_data = []
+        for p in org_projects:
+            ev_count = db.query(models.Event).filter(models.Event.project_id == p.id).count()
+            rec_count = db.query(models.SessionRecording).filter(models.SessionRecording.project_id == p.id).count()
+            projs_data.append({
+                'id': p.id,
+                'name': p.name,
+                'domain': p.domain or 'No domain',
+                'api_key': p.api_key,
+                'event_count': ev_count,
+                'recording_count': rec_count,
+                'snippet_active': ev_count > 0 or rec_count > 0
+            })
+        user_count = db.query(models.User).filter(models.User.organization_id == org.id).count()
+        results.append({
+            'id': org.id,
+            'name': org.name,
+            'created_at': org.created_at.isoformat() if org.created_at else None,
+            'projects': projs_data,
+            'user_count': user_count
+        })
+    return results
+
+@app.get('/api/v1/admin/users')
+def get_admin_users(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    if current_user.role != 'ADMIN':
+        raise HTTPException(status_code=403, detail='Super Admin only')
+    users = db.query(models.User).all()
+    results = []
+    for u in users:
+        org = db.query(models.Organization).filter(models.Organization.id == u.organization_id).first()
+        results.append({
+            'id': u.id,
+            'name': u.name,
+            'email': u.email,
+            'role': u.role,
+            'organization_id': u.organization_id,
+            'organization_name': org.name if org else 'No Org',
+            'created_at': u.created_at.isoformat() if u.created_at else None
+        })
+    return results
+
+@app.post('/api/v1/admin/impersonate/{org_id}')
+def impersonate_tenant(org_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    if current_user.role != 'ADMIN':
+        raise HTTPException(status_code=403, detail='Super Admin only')
+    target_user = db.query(models.User).filter(models.User.organization_id == org_id).first()
+    if not target_user:
+        target_user = current_user
+    token = auth.create_access_token(data={'sub': target_user.email})
+    return {
+        'access_token': token,
+        'user': {
+            'name': target_user.name,
+            'email': target_user.email,
+            'org_id': target_user.organization_id
+        }
+    }
 
 def generate_gemini_content(prompt: str, api_key: str, model_candidate: str = 'gemini-2.5-flash') -> str:
     candidates = [model_candidate, 'gemini-2.0-flash', 'gemini-flash-latest', 'gemini-1.5-flash-latest']

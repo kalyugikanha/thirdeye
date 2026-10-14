@@ -14,7 +14,8 @@ import {
   Bell, 
   LogOut,
   Globe2,
-  CheckCircle2
+  CheckCircle2,
+  ShieldCheck
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiUrl } from '@/lib/api';
@@ -66,6 +67,7 @@ export default function Sidebar() {
   const router = useRouter();
   const [userEmail, setUserEmail] = useState('scan.pe.in@gmail.com');
   const [domain, setDomain] = useState('growinsight.co.in');
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     try {
@@ -73,6 +75,9 @@ export default function Sidebar() {
       if (storedUser) {
         const parsed = JSON.parse(storedUser);
         if (parsed.email) setUserEmail(parsed.email);
+        if (parsed.role === 'ADMIN' || parsed.email === 'admin@thirdeye.io' || parsed.email === 'scan.pe.in@gmail.com') {
+          setIsAdmin(true);
+        }
       }
 
       const token = localStorage.getItem('te_token');
@@ -172,6 +177,24 @@ export default function Sidebar() {
           ))}
         </div>
       </div>
+
+      {/* SuperAdmin Link for Admins */}
+      {isAdmin && (
+        <div className="px-3 py-2 border-t border-slate-800/80 bg-slate-900/40">
+          <Link
+            href="/superadmin"
+            className="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 transition-all group"
+          >
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-indigo-400 group-hover:scale-110 transition-transform" />
+              <span>SuperAdmin Portal</span>
+            </div>
+            <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded font-bold uppercase">
+              Master
+            </span>
+          </Link>
+        </div>
+      )}
 
       {/* User Footer & Logout */}
       <div className="p-4 border-t border-slate-800/80 bg-slate-900/50">
