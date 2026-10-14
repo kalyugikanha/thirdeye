@@ -23,4 +23,4 @@ services:
       - key: NODE_VERSION
         value: 18.17.0
       - key: NEXT_PUBLIC_API_URL
-        value: https://thirdeye-backend.onrender.com
+        value: https://thirdeye-1-pq8w.onrender.com
