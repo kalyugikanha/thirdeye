@@ -177,10 +177,49 @@ export default function WorkspaceDashboard() {
     setLoadingReplay(true);
     setReplayEvents(null);
     try {
-      const res = await fetch(apiUrl(`/api/v1/recordings/${session.id}/events`));
-      if (!res.ok) throw new Error('Failed to load events');
-      const data = await res.json();
-      setReplayEvents(Array.isArray(data) ? data : data.events || []);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('te_token') : null;
+      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+
+      let res = await fetch(apiUrl(`/api/v1/recordings/${session.session_id}/replay`), { headers });
+      if (!res.ok) {
+        res = await fetch(apiUrl(`/api/v1/recordings/${session.session_id}`), { headers });
+      }
+      if (!res.ok) throw new Error('Failed to load recording');
+
+      let parsedPayload: any;
+      const contentEncoding = res.headers.get('content-encoding');
+
+      if (contentEncoding === 'gzip') {
+        parsedPayload = await res.json();
+      } else {
+        const arrayBuffer = await res.arrayBuffer();
+        const uint8 = new Uint8Array(arrayBuffer);
+        if (uint8.length >= 2 && uint8[0] === 0x1f && uint8[1] === 0x8b) {
+          if (typeof DecompressionStream !== 'undefined') {
+            const ds = new DecompressionStream('gzip');
+            const writer = ds.writable.getWriter();
+            writer.write(uint8);
+            writer.close();
+            parsedPayload = await new Response(ds.readable).json();
+          } else {
+            throw new Error('Native DecompressionStream not supported in this environment.');
+          }
+        } else {
+          const text = new TextDecoder().decode(uint8);
+          parsedPayload = JSON.parse(text);
+        }
+      }
+
+      const events = Array.isArray(parsedPayload)
+        ? parsedPayload
+        : parsedPayload && Array.isArray(parsedPayload.events)
+        ? parsedPayload.events
+        : null;
+
+      if (!events || events.length === 0) {
+        throw new Error('No playback events found.');
+      }
+      setReplayEvents(events);
     } catch (err) {
       console.error(err);
       alert('Could not load recording events.');

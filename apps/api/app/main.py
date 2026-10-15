@@ -223,24 +223,15 @@ def create_default_user():
                 models.Event(project_id=proj.id, event_type="pageview", url="https://growinsight.co.in/contact/", referrer="https://growinsight.co.in/", session_id="sess_growinsight_live", properties={**base_props, "title": "Contact – GrowInsight"}, created_at=now_ts - timedelta(minutes=6)),
             ]
             db.add_all(seed_events)
-            db.commit()
+            db.commit()        # Ensure high-fidelity growinsight recording snapshot is generated & saved
+        try:
+            from app.rrweb_seed import write_growinsight_snapshot
+            write_growinsight_snapshot([STORAGE_DIR_API, STORAGE_DIR_ROOT])
+        except Exception as e:
+            print("Could not write growinsight snapshot:", e)
 
-        # Ensure baseline session recording exists if container restarted
-        existing_rec_count = db.query(models.SessionRecording).filter(models.SessionRecording.project_id == proj.id).count()
-        if existing_rec_count == 0:
-            t_ms = int(datetime.utcnow().timestamp() * 1000) - 60000
-            sample_rrweb = [
-                {"type": 4, "data": {"href": "https://growinsight.co.in/", "width": 1280, "height": 720}, "timestamp": t_ms},
-                {"type": 2, "data": {"node": {"type": 0, "childNodes": [{"type": 1, "name": "html", "publicId": "", "systemId": "", "id": 2}, {"type": 2, "tagName": "html", "attributes": {}, "childNodes": [{"type": 2, "tagName": "head", "attributes": {}, "childNodes": [], "id": 4}, {"type": 2, "tagName": "body", "attributes": {"style": "margin:0;font-family:sans-serif;background:#f8fafc;color:#0f172a;"}, "childNodes": [{"type": 2, "tagName": "div", "attributes": {"style": "padding:48px;max-width:960px;margin:0 auto;"}, "childNodes": [{"type": 2, "tagName": "h1", "attributes": {"style": "font-size:36px;font-weight:800;color:#1e293b;"}, "childNodes": [{"type": 3, "textContent": "GrowInsight.co.in — Digital Growth Partner", "id": 8}], "id": 7}, {"type": 2, "tagName": "p", "attributes": {"style": "font-size:18px;color:#475569;margin-top:16px;"}, "childNodes": [{"type": 3, "textContent": "Captured live visitor session from https://growinsight.co.in/", "id": 10}], "id": 9}], "id": 6}], "id": 5}], "id": 3}], "id": 1}, "initialOffset": {"left": 0, "top": 0}}, "timestamp": t_ms + 100},
-                {"type": 3, "data": {"source": 1, "positions": [{"x": 220, "y": 180, "id": 7, "timeOffset": 0}, {"x": 420, "y": 240, "id": 7, "timeOffset": 400}, {"x": 580, "y": 310, "id": 9, "timeOffset": 900}]}, "timestamp": t_ms + 3000},
-                {"type": 3, "data": {"source": 2, "type": 2, "id": 7, "x": 420, "y": 240}, "timestamp": t_ms + 6000},
-                {"type": 3, "data": {"source": 3, "id": 1, "x": 0, "y": 250}, "timestamp": t_ms + 12000}
-            ]
-            gz_bytes = gzip.compress(json.dumps(sample_rrweb).encode("utf-8"))
-            for sdir in [STORAGE_DIR_API, STORAGE_DIR_ROOT]:
-                sdir.mkdir(parents=True, exist_ok=True)
-                with open(sdir / "2n69l5dt3kd.json.gz", "wb") as f:
-                    f.write(gz_bytes)
+        existing_rec = db.query(models.SessionRecording).filter(models.SessionRecording.session_id == "2n69l5dt3kd").first()
+        if not existing_rec:
             db.add(models.SessionRecording(
                 session_id="2n69l5dt3kd",
                 project_id=proj.id,
@@ -248,6 +239,10 @@ def create_default_user():
                 file_path="storage/recordings/2n69l5dt3kd.json.gz",
                 created_at=datetime.utcnow() - timedelta(minutes=15)
             ))
+            db.commit()
+        else:
+            existing_rec.duration = 18
+            existing_rec.project_id = proj.id
             db.commit()
 
 # --- AUTH ---

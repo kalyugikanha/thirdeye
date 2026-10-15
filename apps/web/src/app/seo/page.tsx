@@ -141,11 +141,12 @@ export default function SeoAndSecurityPage() {
   };
 
   return (
-    <div className="flex min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-blue-100">
-      <Sidebar />
+    <div className="min-h-screen bg-gradient-to-tr from-[#ffe4d6] via-[#ffdcd2] to-[#ffeedb] p-2 sm:p-4 lg:p-6 flex items-center justify-center font-sans antialiased selection:bg-rose-500/20">
+      <div className="w-full max-w-[1440px] bg-[#fbfbfe] rounded-[32px] sm:rounded-[40px] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.08)] border border-white/80 overflow-hidden flex flex-col lg:flex-row min-h-[840px] transition-all">
+        <Sidebar />
 
-      <main className="flex-1 flex flex-col pt-8 px-8 lg:px-12 overflow-y-auto">
-        <div className="w-full max-w-6xl mx-auto flex flex-col gap-8 pb-16">
+        <main className="flex-1 flex flex-col p-6 sm:p-8 lg:p-10 overflow-y-auto">
+          <div className="w-full flex flex-col gap-8 pb-16">
           
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
@@ -314,6 +315,7 @@ export default function SeoAndSecurityPage() {
 
         </div>
       </main>
+      </div>
     </div>
   );
 }

@@ -98,6 +98,9 @@
         emit: function(event) {
           events.push(event);
         },
+        inlineStylesheet: true,
+        collectFonts: true,
+        recordCrossOriginIframes: true,
         // DOM mutations, mouse movements, scrolls
         sampling: {
           mousemove: true,

@@ -42,11 +42,12 @@ export default function MarketingPage() {
   };
 
   return (
-    <div className="flex min-h-screen bg-white text-slate-900 font-sans selection:bg-blue-100">
-      <Sidebar />
+    <div className="min-h-screen bg-gradient-to-tr from-[#ffe4d6] via-[#ffdcd2] to-[#ffeedb] p-2 sm:p-4 lg:p-6 flex items-center justify-center font-sans antialiased selection:bg-rose-500/20">
+      <div className="w-full max-w-[1440px] bg-[#fbfbfe] rounded-[32px] sm:rounded-[40px] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.08)] border border-white/80 overflow-hidden flex flex-col lg:flex-row min-h-[840px] transition-all">
+        <Sidebar />
 
-      <main className="flex-1 flex flex-col pt-8 px-10 overflow-y-auto">
-        <div className="w-full max-w-5xl mx-auto flex flex-col gap-8 pb-12">
+        <main className="flex-1 flex flex-col p-6 sm:p-8 lg:p-10 overflow-y-auto">
+          <div className="w-full flex flex-col gap-8 pb-12">
           
           <div className="flex items-center justify-between">
             <div>
@@ -105,6 +106,7 @@ export default function MarketingPage() {
 
         </div>
       </main>
+      </div>
     </div>
   );
 }
