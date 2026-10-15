@@ -15,7 +15,8 @@ import {
   LogOut,
   Globe2,
   CheckCircle2,
-  ShieldCheck
+  ShieldCheck,
+  Lock
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiUrl } from '@/lib/api';
@@ -68,6 +69,7 @@ export default function Sidebar() {
   const [userEmail, setUserEmail] = useState('scan.pe.in@gmail.com');
   const [domain, setDomain] = useState('growinsight.co.in');
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isConnected, setIsConnected] = useState(true);
 
   useEffect(() => {
     try {
@@ -82,14 +84,13 @@ export default function Sidebar() {
 
       const token = localStorage.getItem('te_token');
       if (token) {
-        fetch(apiUrl('/api/projects'), {
+        fetch(apiUrl('/api/v1/projects/status'), {
           headers: { Authorization: `Bearer ${token}` }
         })
           .then((res) => res.json())
-          .then((projs) => {
-            if (Array.isArray(projs) && projs.length > 0 && projs[0].domain) {
-              setDomain(projs[0].domain);
-            }
+          .then((data) => {
+            if (data.domain) setDomain(data.domain);
+            setIsConnected(Boolean(data.is_connected));
           })
           .catch(() => {});
       }
@@ -162,13 +163,15 @@ export default function Sidebar() {
                         <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
                         <span>{item.title}</span>
                       </div>
-                      {item.badge && (
+                      {!isConnected && item.href.includes('analytics') ? (
+                        <Lock className="w-3.5 h-3.5 text-slate-500" />
+                      ) : item.badge ? (
                         <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold uppercase ${
                           isActive ? 'bg-white/20 text-white' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
                         }`}>
                           {item.badge}
                         </span>
-                      )}
+                      ) : null}
                     </Link>
                   );
                 })}

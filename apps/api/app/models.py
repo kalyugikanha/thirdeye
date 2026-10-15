@@ -30,6 +30,8 @@ class Project(Base):
     name = Column(String)
     domain = Column(String)
     api_key = Column(String, unique=True, index=True)
+    dns_verified = Column(Boolean, default=False)
+    dns_token = Column(String, nullable=True)
     organization_id = Column(Integer, ForeignKey('organizations.id'))
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -37,6 +39,8 @@ class Project(Base):
     connectors = relationship('Connector', back_populates='project')
     events = relationship('Event', back_populates='project')
     recordings = relationship('SessionRecording', back_populates='project')
+    apm_traces = relationship('APMTrace', back_populates='project')
+    storage_config = relationship('StorageConfig', back_populates='project', uselist=False)
 
 class Connector(Base):
     __tablename__ = 'connectors'
@@ -140,3 +144,36 @@ class SyntheticMonitor(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship('Project')
+
+
+class APMTrace(Base):
+    __tablename__ = 'apm_traces'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    service_name = Column(String, default='web-backend')
+    endpoint = Column(String, index=True)
+    method = Column(String, default='GET')
+    status_code = Column(Integer, default=200)
+    duration_ms = Column(Integer, default=0)
+    error_detail = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship('Project', back_populates='apm_traces')
+
+
+class StorageConfig(Base):
+    __tablename__ = 'storage_configs'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), unique=True, index=True)
+    provider = Column(String, default='thirdeye_cloud')  # 'thirdeye_cloud', 's3', 'r2', 'custom_webhook'
+    bucket_name = Column(String, nullable=True)
+    endpoint_url = Column(String, nullable=True)
+    access_key = Column(String, nullable=True)
+    secret_key = Column(String, nullable=True)
+    region = Column(String, default='us-east-1')
+    webhook_url = Column(String, nullable=True)
+    custom_folder_path = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship('Project', back_populates='storage_config')

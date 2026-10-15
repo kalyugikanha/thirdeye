@@ -206,26 +206,80 @@
   // Automatically track initial pageview
   track('pageview');
 
-  // Automatically track clicks for Heatmaps & Analytics
+  // 8. Rage Clicks & Click Heatmap Tracking
+  var lastClick = { time: 0, target: null, count: 0 };
   document.addEventListener('click', function(e) {
     try {
       var x = Math.round((e.pageX / Math.max(window.innerWidth, 1)) * 100);
       var y = Math.round((e.pageY / Math.max(document.documentElement.scrollHeight, window.innerHeight, 1)) * 100);
       var targetTag = e.target ? (e.target.tagName || '').toLowerCase() : '';
       var targetText = e.target && e.target.innerText ? e.target.innerText.trim().substring(0, 30) : '';
+
       track('click', {
         x: x,
         y: y,
         tag: targetTag,
         text: targetText
       });
+
+      // Detect Rage Clicks: 3+ rapid clicks on same element within 500ms
+      var now = Date.now();
+      if (lastClick.target === e.target && (now - lastClick.time) < 500) {
+        lastClick.count++;
+        if (lastClick.count === 3) {
+          track('rage_click', {
+            tag: targetTag,
+            text: targetText,
+            x: x,
+            y: y,
+            clicks: lastClick.count
+          });
+        }
+      } else {
+        lastClick = { time: now, target: e.target, count: 1 };
+      }
     } catch (clickErr) {}
   }, true);
+
+  // 9. Code-Level Error Monitoring (JS Exceptions & Unhandled Promises)
+  window.addEventListener('error', function(e) {
+    try {
+      track('code_error', {
+        message: e.message || 'Script error',
+        filename: e.filename || '',
+        lineno: e.lineno || 0,
+        colno: e.colno || 0,
+        stack: e.error && e.error.stack ? e.error.stack.substring(0, 500) : ''
+      });
+    } catch (err) {}
+  });
+
+  window.addEventListener('unhandledrejection', function(e) {
+    try {
+      track('code_error', {
+        message: e.reason ? (e.reason.message || String(e.reason)) : 'Unhandled Promise Rejection',
+        type: 'unhandled_rejection'
+      });
+    } catch (err) {}
+  });
+
+  // 10. Responsive & Layout Error Detection (viewport overflow, broken assets)
+  window.addEventListener('load', function() {
+    try {
+      if (document.documentElement.scrollWidth > window.innerWidth + 20) {
+        track('layout_error', {
+          type: 'horizontal_overflow',
+          scroll_width: document.documentElement.scrollWidth,
+          viewport_width: window.innerWidth
+        });
+      }
+    } catch (e) {}
+  });
 
   // Initiate session recording
   loadAndStartRecording();
 
-  console.log('[ThirdEye] Tracking active for project:', apiKey, 'via:', apiHost);
+  console.log('[ThirdEye] Full-stack observability active for project:', apiKey, 'via:', apiHost);
 
   // Expose to window
   window.ThirdEye = {

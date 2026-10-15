@@ -9,10 +9,9 @@ import { apiUrl } from '@/lib/api';
 export default function RegisterPage() {
   const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
-  const [name, setName] = useState('');
+  const [domain, setDomain] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [orgName, setOrgName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -22,14 +21,15 @@ export default function RegisterPage() {
     setError('');
 
     try {
+      const cleanDomain = domain.replace('https://', '').replace('http://', '').trim();
       const res = await fetch(apiUrl('/api/auth/register'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: name,
-          email: email,
+          domain: cleanDomain,
+          email: email.trim(),
           password: password,
-          organization_name: orgName
+          name: cleanDomain.split('.')[0] || 'Client'
         }),
       });
 
@@ -43,8 +43,8 @@ export default function RegisterPage() {
       if (data.user) {
         localStorage.setItem('te_user', JSON.stringify(data.user));
       }
-      // Direct new clients straight to onboarding to configure domain & copy tracking snippet
-      router.push('/onboarding');
+      // Direct client straight to workspace dashboard with activation guide
+      router.push('/');
     } catch (err: any) {
       setError(err.message || 'Registration failed');
     } finally {
@@ -154,39 +154,24 @@ export default function RegisterPage() {
 
             {/* Form */}
             <form className="space-y-4" onSubmit={handleRegister}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Full Name
-                  </label>
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Juliette"
-                    required
-                    className="w-full rounded-2xl bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 transition-all"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Organization / Company
-                  </label>
-                  <input
-                    type="text"
-                    value={orgName}
-                    onChange={(e) => setOrgName(e.target.value)}
-                    placeholder="e.g. Acme Corp"
-                    required
-                    className="w-full rounded-2xl bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 transition-all"
-                  />
-                </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Target Website / Domain
+                </label>
+                <input
+                  type="text"
+                  value={domain}
+                  onChange={(e) => setDomain(e.target.value)}
+                  placeholder="e.g. growinsight.co.in or myapp.com"
+                  required
+                  className="w-full rounded-2xl bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 transition-all font-mono"
+                />
+                <p className="mt-1 text-[11px] text-slate-400">Enter without https:// (subdomains supported)</p>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Email address
+                  Work Email Address
                 </label>
                 <input
                   type="email"
@@ -219,9 +204,7 @@ export default function RegisterPage() {
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-                <p className="mt-1.5 text-[11px] text-slate-400">
-                  At least 8 characters, letters, numbers, and symbols.
-                </p>
+                <p className="mt-1 text-[11px] text-slate-400">At least 8 characters</p>
               </div>
 
               <div className="pt-2">

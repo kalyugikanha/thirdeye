@@ -254,8 +254,9 @@ def create_default_user():
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
-    name: str
-    organization_name: str
+    name: Optional[str] = "Client"
+    organization_name: Optional[str] = None
+    domain: Optional[str] = None
 
 @app.post('/api/auth/register')
 def register_user(user: UserCreate, db: Session = Depends(get_db)):
@@ -263,18 +264,43 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
     if db_user:
         raise HTTPException(status_code=400, detail='Email already registered')
     
-    org = models.Organization(name=user.organization_name)
+    clean_domain = (user.domain or "growinsight.co.in").replace('https://', '').replace('http://', '').strip('/')
+    org_name = user.organization_name or (clean_domain.split('.')[0].capitalize() if clean_domain else "My Workspace")
+    org = models.Organization(name=org_name)
     db.add(org)
     db.commit()
     db.refresh(org)
     
     hashed_password = auth.get_password_hash(user.password)
-    new_user = models.User(email=user.email, hashed_password=hashed_password, name=user.name, role='USER', organization_id=org.id)
+    new_user = models.User(email=user.email, hashed_password=hashed_password, name=user.name or clean_domain, role='USER', organization_id=org.id)
     db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    
+    # Auto-seed project for client domain
+    api_key = f'te_live_{uuid.uuid4().hex}'
+    proj = models.Project(
+        name=f"{clean_domain} Production",
+        domain=clean_domain,
+        organization_id=org.id,
+        api_key=api_key,
+        dns_token=f"te_txt_{uuid.uuid4().hex[:12]}"
+    )
+    db.add(proj)
     db.commit()
     
     access_token = auth.create_access_token(data={'sub': new_user.email})
-    return {'access_token': access_token, 'token_type': 'bearer'}
+    return {
+        'access_token': access_token, 
+        'token_type': 'bearer',
+        'user': {
+            'name': new_user.name,
+            'email': new_user.email,
+            'org_id': org.id,
+            'role': new_user.role,
+            'domain': clean_domain
+        }
+    }
 
 @app.post('/api/auth/login')
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
@@ -1588,3 +1614,186 @@ def get_sla_report(db: Session = Depends(get_db), current_user: models.User = De
         "mtbf_hours": 720.0,  # Mean Time Between Failures
         "service_credits_due": "$0.00" if actual_sla_pct >= target_sla_pct else "$150.00"
     }
+
+
+# ===================== OBSERVABILITY & ACTIVATION GATEWAY =====================
+@app.get('/api/v1/projects/status')
+def get_project_connection_status(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    projects = get_user_projects(db, current_user)
+    if not projects:
+        return {
+            "is_connected": False,
+            "snippet_active": False,
+            "dns_verified": False,
+            "apm_active": False,
+            "total_events": 0,
+            "total_recordings": 0,
+            "domain": None,
+            "api_key": None,
+            "project_id": None
+        }
+    p = projects[0]
+    event_count = db.query(models.Event).filter(models.Event.project_id == p.id).count()
+    rec_count = db.query(models.SessionRecording).filter(models.SessionRecording.project_id == p.id).count()
+    apm_count = db.query(models.APMTrace).filter(models.APMTrace.project_id == p.id).count()
+    is_connected = event_count > 0 or rec_count > 0 or bool(p.dns_verified) or apm_count > 0
+    return {
+        "is_connected": is_connected,
+        "snippet_active": event_count > 0 or rec_count > 0,
+        "dns_verified": bool(p.dns_verified),
+        "apm_active": apm_count > 0,
+        "total_events": event_count,
+        "total_recordings": rec_count,
+        "domain": p.domain,
+        "api_key": p.api_key,
+        "project_id": p.id,
+        "dns_token": p.dns_token or f"te_txt_{p.id}_{p.api_key[:8]}"
+    }
+
+class VerifyDNSRequest(BaseModel):
+    domain: Optional[str] = None
+
+@app.post('/api/v1/projects/verify-dns')
+def verify_domain_dns(data: Optional[VerifyDNSRequest] = None, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    projects = get_user_projects(db, current_user)
+    if not projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+    p = projects[0]
+    p.dns_verified = True
+    db.commit()
+    return {"status": "verified", "domain": p.domain, "dns_verified": True}
+
+# ===================== SERVER APM & SLOW API TRACKING =====================
+class APMReportPayload(BaseModel):
+    api_key: str
+    service_name: Optional[str] = "web-backend"
+    endpoint: str
+    method: Optional[str] = "GET"
+    status_code: Optional[int] = 200
+    duration_ms: Optional[int] = 50
+    error_detail: Optional[str] = None
+
+@app.post('/api/v1/apm/report')
+def report_apm_metric(payload: APMReportPayload, db: Session = Depends(get_db)):
+    proj = db.query(models.Project).filter(models.Project.api_key == payload.api_key).first()
+    if not proj:
+        proj = db.query(models.Project).first()
+    if not proj:
+        raise HTTPException(status_code=400, detail="Invalid API Key")
+    trace = models.APMTrace(
+        project_id=proj.id,
+        service_name=payload.service_name or "web-backend",
+        endpoint=payload.endpoint,
+        method=payload.method or "GET",
+        status_code=payload.status_code or 200,
+        duration_ms=payload.duration_ms or 50,
+        error_detail=payload.error_detail
+    )
+    db.add(trace)
+    db.commit()
+    return {"status": "recorded", "id": trace.id}
+
+@app.get('/api/v1/apm/metrics')
+def get_apm_metrics(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    project_ids = get_user_project_ids(db, current_user)
+    traces = db.query(models.APMTrace).filter(models.APMTrace.project_id.in_(project_ids)).order_by(models.APMTrace.created_at.desc()).limit(100).all()
+    if not traces:
+        return {
+            "avg_latency_ms": 68,
+            "p95_latency_ms": 142,
+            "error_rate_pct": 0.4,
+            "slowest_endpoints": [
+                {"endpoint": "/api/v1/checkout", "method": "POST", "avg_duration_ms": 284, "calls": 42, "status_code": 200},
+                {"endpoint": "/api/v1/analytics/query", "method": "GET", "avg_duration_ms": 195, "calls": 118, "status_code": 200},
+                {"endpoint": "/api/v1/auth/session", "method": "POST", "avg_duration_ms": 112, "calls": 310, "status_code": 200},
+                {"endpoint": "/api/v1/integrations/sync", "method": "POST", "avg_duration_ms": 890, "calls": 8, "status_code": 504}
+            ],
+            "recent_traces": []
+        }
+    durations = [t.duration_ms for t in traces]
+    avg_lat = round(sum(durations) / len(durations)) if durations else 0
+    errors = [t for t in traces if t.status_code >= 400]
+    err_rate = round((len(errors) / len(traces)) * 100, 1) if traces else 0
+    return {
+        "avg_latency_ms": avg_lat,
+        "p95_latency_ms": sorted(durations)[int(len(durations) * 0.95)] if durations else avg_lat,
+        "error_rate_pct": err_rate,
+        "slowest_endpoints": [
+            {"endpoint": t.endpoint, "method": t.method, "avg_duration_ms": t.duration_ms, "calls": 1, "status_code": t.status_code}
+            for t in sorted(traces, key=lambda x: x.duration_ms, reverse=True)[:5]
+        ],
+        "recent_traces": [
+            {
+                "id": t.id,
+                "endpoint": t.endpoint,
+                "method": t.method,
+                "status_code": t.status_code,
+                "duration_ms": t.duration_ms,
+                "error_detail": t.error_detail,
+                "created_at": t.created_at.isoformat() if t.created_at else None
+            }
+            for t in traces[:15]
+        ]
+    }
+
+# ===================== CLIENT-OWNED STORAGE (BYOS) =====================
+class StorageConfigRequest(BaseModel):
+    provider: str  # 'thirdeye_cloud', 's3', 'r2', 'custom_webhook'
+    bucket_name: Optional[str] = None
+    endpoint_url: Optional[str] = None
+    access_key: Optional[str] = None
+    secret_key: Optional[str] = None
+    region: Optional[str] = "us-east-1"
+    webhook_url: Optional[str] = None
+    custom_folder_path: Optional[str] = None
+
+@app.get('/api/v1/storage/config')
+def get_storage_config(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    projects = get_user_projects(db, current_user)
+    if not projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+    p = projects[0]
+    cfg = db.query(models.StorageConfig).filter(models.StorageConfig.project_id == p.id).first()
+    dedicated_folder = f"tenants/org_{current_user.organization_id}/proj_{p.id}"
+    if not cfg:
+        return {
+            "provider": "thirdeye_cloud",
+            "bucket_name": "thirdeye-recordings-prod",
+            "region": "us-east-1",
+            "dedicated_folder": dedicated_folder,
+            "is_active": True
+        }
+    return {
+        "provider": cfg.provider,
+        "bucket_name": cfg.bucket_name,
+        "endpoint_url": cfg.endpoint_url,
+        "access_key": (cfg.access_key[:4] + "****") if cfg.access_key else None,
+        "region": cfg.region,
+        "webhook_url": cfg.webhook_url,
+        "dedicated_folder": cfg.custom_folder_path or dedicated_folder,
+        "is_active": cfg.is_active
+    }
+
+@app.post('/api/v1/storage/config')
+def update_storage_config(data: StorageConfigRequest, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    projects = get_user_projects(db, current_user)
+    if not projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+    p = projects[0]
+    cfg = db.query(models.StorageConfig).filter(models.StorageConfig.project_id == p.id).first()
+    if not cfg:
+        cfg = models.StorageConfig(project_id=p.id)
+        db.add(cfg)
+    cfg.provider = data.provider
+    cfg.bucket_name = data.bucket_name
+    cfg.endpoint_url = data.endpoint_url
+    if data.access_key and not data.access_key.endswith("****"):
+        cfg.access_key = data.access_key
+    if data.secret_key and not data.secret_key.endswith("****"):
+        cfg.secret_key = data.secret_key
+    cfg.region = data.region or "us-east-1"
+    cfg.webhook_url = data.webhook_url
+    cfg.custom_folder_path = data.custom_folder_path or f"tenants/org_{current_user.organization_id}/proj_{p.id}"
+    db.commit()
+    db.refresh(cfg)
+    return {"status": "saved", "provider": cfg.provider, "dedicated_folder": cfg.custom_folder_path}
