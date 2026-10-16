@@ -190,11 +190,9 @@ export default function LivePulsePage() {
   const topPathEntry = Object.entries(topPaths).sort((a, b) => b[1] - a[1])[0];
 
   return (
-    <div className="min-h-screen bg-gradient-to-tr from-[#ffe4d6] via-[#ffdcd2] to-[#ffeedb] p-2 sm:p-4 lg:p-6 flex items-center justify-center font-sans antialiased selection:bg-rose-500/20">
-      <div className="w-full max-w-[1580px] h-[96vh] bg-[#fbfbf9]/95 backdrop-blur-2xl rounded-[40px] border border-white/80 shadow-[0_30px_90px_rgba(244,63,94,0.08)] flex overflow-hidden">
-        
-        {/* Dynamic Sidebar */}
-        <Sidebar />
+    <div className="min-h-screen w-full bg-[#f8f9fc] flex flex-col lg:flex-row font-sans antialiased selection:bg-rose-500/20">
+      {/* Dynamic Sidebar */}
+      <Sidebar />
 
         {/* Main Workspace */}
         <main className="flex-1 flex flex-col h-full min-w-0 overflow-y-auto">
@@ -404,7 +402,6 @@ export default function LivePulsePage() {
             </div>
           </div>
         </main>
-      </div>
     </div>
   );
 }

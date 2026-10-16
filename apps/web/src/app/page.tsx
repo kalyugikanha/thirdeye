@@ -293,15 +293,10 @@ export default function WorkspaceDashboard() {
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-tr from-[#ffe4d6] via-[#ffdcd2] to-[#ffeedb] p-2 sm:p-4 lg:p-6 flex items-center justify-center font-sans antialiased selection:bg-rose-500/20">
+    <div className="min-h-screen w-full bg-[#f8f9fc] flex flex-col lg:flex-row font-sans antialiased selection:bg-rose-500/20">
       
-      {/* Main Floating Rounded Canvas (Reference Mockup Container) */}
-      <div className="w-full max-w-[1440px] bg-[#fbfbfe] rounded-[32px] sm:rounded-[40px] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.08)] border border-white/80 overflow-hidden flex flex-col lg:flex-row min-h-[840px] transition-all">
-        
-        {/* ========================================================= */}
-        {/* COLUMN 1: MINIMALIST LEFT SIDEBAR */}
-        {/* ========================================================= */}
-        <aside className="w-full lg:w-64 border-b lg:border-b-0 lg:border-r border-slate-100/80 p-5 flex flex-col justify-between bg-transparent flex-shrink-0">
+      {/* COLUMN 1: MINIMALIST LEFT SIDEBAR */}
+      <aside className="w-full lg:w-64 border-b lg:border-b-0 lg:border-r border-slate-200/80 p-5 flex flex-col justify-between bg-white flex-shrink-0 min-h-screen">
           <div className="space-y-6">
             
             {/* Logo */}
@@ -857,10 +852,9 @@ export default function WorkspaceDashboard() {
 
         </main>
 
-        {/* ========================================================= */}
         {/* COLUMN 3: RIGHT ACTIVITY & LIVE SESSIONS (MOCKUP RIGHT SIDE) */}
         {/* ========================================================= */}
-        <aside className="w-full lg:w-80 border-t lg:border-t-0 lg:border-l border-slate-100/80 p-5 flex flex-col justify-between bg-transparent flex-shrink-0">
+        <aside className="w-full lg:w-80 border-t lg:border-t-0 lg:border-l border-slate-200/80 p-5 flex flex-col justify-between bg-white flex-shrink-0 min-h-screen">
           <div>
             
             {/* Header */}
@@ -941,8 +935,6 @@ export default function WorkspaceDashboard() {
             </Link>
           </div>
         </aside>
-
-      </div>
 
       {/* ========================================================= */}
       {/* RRWEB REPLAY MODAL */}

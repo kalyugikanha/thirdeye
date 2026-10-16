@@ -95,13 +95,11 @@ export default function ExecutiveReportsPage() {
   });
 
   return (
-    <div className="min-h-screen bg-gradient-to-tr from-[#ffe4d6] via-[#ffdcd2] to-[#ffeedb] p-2 sm:p-4 lg:p-6 flex items-center justify-center font-sans antialiased selection:bg-rose-500/20 print:p-0 print:bg-white">
-      <div className="w-full max-w-[1580px] min-h-[96vh] bg-[#fbfbf9]/95 backdrop-blur-2xl rounded-[40px] border border-white/80 shadow-[0_30px_90px_rgba(244,63,94,0.08)] flex overflow-hidden print:rounded-none print:border-none print:shadow-none print:w-full print:h-auto">
-        
-        {/* Dynamic Sidebar - Hidden during print */}
-        <div className="print:hidden">
-          <Sidebar />
-        </div>
+    <div className="min-h-screen w-full bg-[#f8f9fc] flex flex-col lg:flex-row font-sans antialiased selection:bg-rose-500/20 print:p-0 print:bg-white">
+      {/* Dynamic Sidebar - Hidden during print */}
+      <div className="print:hidden">
+        <Sidebar />
+      </div>
 
         {/* Main Workspace */}
         <main className="flex-1 flex flex-col h-full min-w-0 overflow-y-auto print:overflow-visible">
@@ -320,7 +318,6 @@ export default function ExecutiveReportsPage() {
 
           </div>
         </main>
-      </div>
     </div>
   );
 }

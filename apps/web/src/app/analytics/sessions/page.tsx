@@ -338,13 +338,9 @@ export default function SessionsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-tr from-[#ffe4d6] via-[#ffdcd2] to-[#ffeedb] p-2 sm:p-4 lg:p-6 flex items-center justify-center font-sans antialiased selection:bg-rose-500/20">
-      
-      {/* Main Floating Rounded Bento Canvas */}
-      <div className="w-full max-w-[1440px] bg-[#fbfbfe] rounded-[32px] sm:rounded-[40px] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.08)] border border-white/80 overflow-hidden flex flex-col lg:flex-row min-h-[840px] transition-all">
-        
-        {/* Unified Bento Sidebar */}
-        <Sidebar />
+    <div className="min-h-screen w-full bg-[#f8f9fc] flex flex-col lg:flex-row font-sans antialiased selection:bg-rose-500/20">
+      {/* Unified Bento Sidebar */}
+      <Sidebar />
 
         {/* Main Content Area */}
         <main className="flex-1 flex flex-col p-6 sm:p-8 lg:p-10 overflow-y-auto">
@@ -528,7 +524,6 @@ export default function SessionsPage() {
             )}
           </div>
         </main>
-      </div>
 
       {/* Floating High-Fidelity Replay Modal Backdrop */}
       {activeSession && (

@@ -181,7 +181,7 @@ export default function Sidebar() {
 
   return (
     <>
-      <aside className="w-full lg:w-64 border-b lg:border-b-0 lg:border-r border-slate-100/80 p-5 flex flex-col justify-between bg-transparent flex-shrink-0 select-none font-sans">
+      <aside className="w-full lg:w-64 border-b lg:border-b-0 lg:border-r border-slate-200/80 p-5 flex flex-col justify-between bg-white flex-shrink-0 select-none font-sans min-h-screen">
         <div className="space-y-6">
           
           {/* Brand Header */}
