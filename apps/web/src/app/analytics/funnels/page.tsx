@@ -45,7 +45,8 @@ export default function FunnelsPage() {
 
   // Form state
   const [name, setName] = useState('');
-  const [stepsInput, setStepsInput] = useState('https://growinsight.co.in/, /about-us/, /contact/');
+  const [clientDomain, setClientDomain] = useState('yourdomain.com');
+  const [stepsInput, setStepsInput] = useState('https://example.com/, /pricing, /checkout');
   const [creating, setCreating] = useState(false);
   const [projectId, setProjectId] = useState<number | null>(null);
 
@@ -53,6 +54,17 @@ export default function FunnelsPage() {
     const token = localStorage.getItem('te_token');
     if (!token) return router.push('/login');
     try {
+      try {
+        const sRes = await fetch(apiUrl('/api/v1/projects/status'), { headers: { Authorization: `Bearer ${token}` } });
+        if (sRes.ok) {
+          const sData = await sRes.json();
+          if (sData.domain) {
+            setClientDomain(sData.domain);
+            setStepsInput(`https://${sData.domain}/, /pricing, /checkout`);
+          }
+        }
+      } catch (e) {}
+
       const projRes = await fetch(apiUrl('/api/projects'), {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -133,8 +145,8 @@ export default function FunnelsPage() {
   };
 
   const createPresetFunnel = () => {
-    setName('GrowInsight High-Intent Lead Flow');
-    setStepsInput('https://growinsight.co.in/, /about-us/, /contact/');
+    setName(`${clientDomain} Conversion Flow`);
+    setStepsInput(`https://${clientDomain}/, /pricing, /checkout`);
   };
 
   return (
@@ -246,6 +258,14 @@ export default function FunnelsPage() {
                             {step.drop_off_pct}% Drop-off
                           </div>
                         )}
+
+                        <Link
+                          href={`/analytics/sessions?url=${encodeURIComponent(step.url)}`}
+                          className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/60 px-2.5 py-1 rounded-xl transition-colors mt-3"
+                        >
+                          <Video className="w-3 h-3" />
+                          <span>Watch Step Replays</span>
+                        </Link>
                       </div>
                     </div>
                   </div>
@@ -291,10 +311,10 @@ export default function FunnelsPage() {
               <button
                 type="button"
                 onClick={createPresetFunnel}
-                className="text-xs font-bold text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-xl border border-blue-200 transition-colors flex items-center gap-1.5"
+                className="text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-3 py-1.5 rounded-xl border border-rose-200 transition-colors flex items-center gap-1.5"
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                Load GrowInsight Preset
+                <span>Load {clientDomain} Preset</span>
               </button>
             </div>
 

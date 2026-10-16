@@ -25,11 +25,14 @@ import {
   Globe,
   Loader2,
   Terminal,
-  ExternalLink
+  ExternalLink,
+  Video
 } from 'lucide-react';
 
 interface CodeError {
   id: number;
+  session_id?: string;
+  status?: string;
   message: string;
   filename: string;
   lineno: number;
@@ -156,6 +159,31 @@ export default function ErrorsIntelligencePage() {
 
   const toggleExpand = (id: string) => {
     setExpandedId(expandedId === id ? null : id);
+  };
+
+  const handleToggleStatus = async (err: CodeError) => {
+    const nextStatus = (err.status || 'open') === 'open' ? 'resolved' : 'open';
+    const token = localStorage.getItem('te_token');
+    try {
+      const res = await fetch(apiUrl(`/api/v1/errors/${err.id}/status`), {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: nextStatus })
+      });
+      if (res.ok) {
+        setData(prev => ({
+          ...prev,
+          code_errors: prev.code_errors.map(item =>
+            item.id === err.id ? { ...item, status: nextStatus } : item
+          )
+        }));
+      }
+    } catch (e) {
+      console.error('Failed to toggle error status:', e);
+    }
   };
 
   const totalIssues =
@@ -476,18 +504,30 @@ export default function ErrorsIntelligencePage() {
                   {(activeTab === 'all' || activeTab === 'code') &&
                     data.code_errors.map((err) => {
                       const isExpanded = expandedId === `code_${err.id}`;
+                      const isResolved = (err.status || 'open') === 'resolved';
                       return (
                         <div
                           key={`code_${err.id}`}
-                          className="bg-white rounded-3xl border border-slate-200/60 p-5 shadow-sm hover:shadow-md transition-all space-y-3"
+                          className={`rounded-3xl border p-5 shadow-sm hover:shadow-md transition-all space-y-3 ${
+                            isResolved ? 'bg-emerald-50/20 border-emerald-200/80' : 'bg-white border-slate-200/60'
+                          }`}
                         >
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                             <div className="flex items-start sm:items-center gap-3">
-                              <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold flex-shrink-0">
+                              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-bold flex-shrink-0 ${
+                                isResolved ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'
+                              }`}>
                                 <Code2 className="w-5 h-5" />
                               </div>
                               <div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                                    isResolved
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : 'bg-rose-50 text-rose-700 border-rose-200'
+                                  }`}>
+                                    {isResolved ? 'Resolved' : 'Open Issue'}
+                                  </span>
                                   <span className="text-[10px] font-bold uppercase tracking-wider text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
                                     JavaScript Exception
                                   </span>
@@ -495,7 +535,9 @@ export default function ErrorsIntelligencePage() {
                                     {err.count} occurrence{err.count > 1 ? 's' : ''}
                                   </span>
                                 </div>
-                                <h4 className="text-sm font-bold text-slate-900 mt-1 font-mono">
+                                <h4 className={`text-sm font-bold mt-1 font-mono ${
+                                  isResolved ? 'text-slate-500 line-through' : 'text-slate-900'
+                                }`}>
                                   {err.message}
                                 </h4>
                                 <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400 mt-1">
@@ -508,13 +550,36 @@ export default function ErrorsIntelligencePage() {
                               </div>
                             </div>
 
-                            <button
-                              onClick={() => toggleExpand(`code_${err.id}`)}
-                              className="self-start sm:self-center px-3.5 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 transition-colors flex items-center gap-1.5"
-                            >
-                              <span>{isExpanded ? 'Hide Stack' : 'Inspect Stack'}</span>
-                              {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                            </button>
+                            <div className="flex items-center gap-2 flex-wrap self-start sm:self-center">
+                              {err.session_id && (
+                                <Link
+                                  href={`/analytics/sessions?session=${err.session_id}`}
+                                  className="px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 text-xs font-bold transition-all flex items-center gap-1.5"
+                                  title="Watch session replay where this error occurred"
+                                >
+                                  <Video className="w-3.5 h-3.5" />
+                                  <span>Watch Session</span>
+                                </Link>
+                              )}
+                              <button
+                                onClick={() => handleToggleStatus(err)}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 ${
+                                  isResolved
+                                    ? 'bg-slate-50 hover:bg-slate-100 text-slate-600 border-slate-200'
+                                    : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200'
+                                }`}
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>{isResolved ? 'Reopen' : 'Mark Resolved'}</span>
+                              </button>
+                              <button
+                                onClick={() => toggleExpand(`code_${err.id}`)}
+                                className="px-3.5 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 transition-colors flex items-center gap-1.5"
+                              >
+                                <span>{isExpanded ? 'Hide Stack' : 'Inspect Stack'}</span>
+                                {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
                           </div>
 
                           {isExpanded && (

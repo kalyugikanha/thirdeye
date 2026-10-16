@@ -27,7 +27,8 @@ import {
   Zap,
   Copy,
   Check,
-  MousePointer
+  MousePointer,
+  Download
 } from 'lucide-react';
 
 // Dynamic import ensures rrweb-player only loads client-side
@@ -80,6 +81,7 @@ export default function SessionsPage() {
   const [aiDiagnostic, setAiDiagnostic] = useState<any | null>(null);
   const [loadingAi, setLoadingAi] = useState(false);
   const [copiedFix, setCopiedFix] = useState(false);
+  const [exportingHtml, setExportingHtml] = useState(false);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -240,6 +242,45 @@ export default function SessionsPage() {
       setLoadingAi(false);
     }
   };
+
+  const handleExportHtml = async (sessionId: string) => {
+    setExportingHtml(true);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('te_token') : null;
+      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await fetch(apiUrl(`/api/v1/recordings/${sessionId}/export/html`), { headers });
+      if (!res.ok) {
+        throw new Error(`Export failed with HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `ThirdEye-Replay-${sessionId}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      console.error('Failed to download standalone HTML replay:', e);
+      alert('Unable to export session replay to offline HTML.');
+    } finally {
+      setExportingHtml(false);
+    }
+  };
+
+  useEffect(() => {
+    if (recordings.length > 0 && typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const targetSessionId = params.get('session');
+      if (targetSessionId && (!activeSession || activeSession.session_id !== targetSessionId)) {
+        const match = recordings.find(r => r.session_id === targetSessionId);
+        if (match) {
+          handleWatchReplay(match);
+        }
+      }
+    }
+  }, [recordings]);
 
   const handleTimelineClick = (item: any) => {
     if (typeof item.offset_ms === 'number') {
@@ -526,6 +567,21 @@ export default function SessionsPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    if (activeSession) handleExportHtml(activeSession.session_id);
+                  }}
+                  disabled={exportingHtml}
+                  className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 shadow-sm transition-all disabled:opacity-50"
+                  title="Download standalone offline HTML player"
+                >
+                  {exportingHtml ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-400" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5 text-rose-400" />
+                  )}
+                  <span>{exportingHtml ? 'Exporting...' : 'Export HTML'}</span>
+                </button>
                 <button
                   onClick={() => {
                     setAiTab('ai');

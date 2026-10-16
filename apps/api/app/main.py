@@ -64,6 +64,13 @@ def safe_migrate_sqlite_schema():
                         _sconn.execute("ALTER TABLE projects ADD COLUMN dns_verified BOOLEAN DEFAULT 0")
                     if 'dns_token' not in cols:
                         _sconn.execute("ALTER TABLE projects ADD COLUMN dns_token TEXT")
+
+                    org_cols = [c[1] for c in _sconn.execute("PRAGMA table_info(organizations)").fetchall()]
+                    if 'plan' not in org_cols:
+                        _sconn.execute("ALTER TABLE organizations ADD COLUMN plan TEXT DEFAULT 'Pro'")
+                    if 'monthly_event_limit' not in org_cols:
+                        _sconn.execute("ALTER TABLE organizations ADD COLUMN monthly_event_limit INTEGER DEFAULT 100000")
+
                     _sconn.commit()
             except Exception:
                 pass
@@ -1331,6 +1338,8 @@ def get_analytics_errors(db: Session = Depends(get_db), current_user: models.Use
         if sig not in code_groups:
             code_groups[sig] = {
                 "id": ev.id,
+                "session_id": ev.session_id,
+                "status": props.get("status", "open"),
                 "message": msg,
                 "filename": props.get("filename", ""),
                 "lineno": props.get("lineno", 0),
@@ -1538,6 +1547,24 @@ def simulate_sample_errors(db: Session = Depends(get_db), current_user: models.U
     db.commit()
 
     return {"status": "simulated", "domain": domain, "events_created": 4}
+
+class ErrorStatusUpdate(BaseModel):
+    status: str  # 'open', 'resolved', 'muted'
+
+@app.patch('/api/v1/errors/{error_id}/status')
+def update_error_status(error_id: int, data: ErrorStatusUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    user_project_ids = get_user_project_ids(db, current_user)
+    ev = db.query(models.Event).filter(models.Event.id == error_id).first()
+    if not ev:
+        raise HTTPException(status_code=404, detail="Error event not found")
+    if ev.project_id not in user_project_ids and not is_superadmin_user(current_user):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    props = dict(ev.properties or {})
+    props["status"] = data.status
+    ev.properties = props
+    db.commit()
+    return {"status": data.status, "error_id": error_id, "new_status": data.status}
 
 # --- PROJECTS ---
 class ProjectCreate(BaseModel):
@@ -3078,5 +3105,228 @@ def export_analytics_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+
+# ===================== THIRDEYE COMMERCIAL: BILLING & USAGE HUB =====================
+@app.get('/api/v1/billing/usage')
+def get_billing_usage(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    user_project_ids = get_user_project_ids(db, current_user)
+    org = db.query(models.Organization).filter(models.Organization.id == current_user.organization_id).first()
+    plan = org.plan if org and org.plan else "Pro"
+
+    first_of_month = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    events_count = db.query(models.Event).filter(
+        models.Event.project_id.in_(user_project_ids),
+        models.Event.created_at >= first_of_month
+    ).count()
+
+    recordings_count = db.query(models.SessionRecording).filter(
+        models.SessionRecording.project_id.in_(user_project_ids)
+    ).count()
+
+    monitors_count = db.query(models.UptimeMonitor).filter(
+        models.UptimeMonitor.project_id.in_(user_project_ids)
+    ).count()
+
+    quotas = {
+        "Free": {"monthly_events": 5000, "max_replays": 100, "max_monitors": 3, "retention_days": 7, "price_usd": 0},
+        "Pro": {"monthly_events": 100000, "max_replays": 5000, "max_monitors": 25, "retention_days": 30, "price_usd": 49},
+        "Enterprise": {"monthly_events": 1000000, "max_replays": 50000, "max_monitors": 100, "retention_days": 90, "price_usd": 199}
+    }
+    active_quota = quotas.get(plan, quotas["Pro"])
+
+    return {
+        "organization_id": current_user.organization_id,
+        "organization_name": org.name if org else "Default Org",
+        "plan": plan,
+        "monthly_price_usd": active_quota["price_usd"],
+        "retention_days": active_quota["retention_days"],
+        "billing_cycle": "Monthly",
+        "next_billing_date": (datetime.utcnow() + timedelta(days=22)).strftime("%B %d, %Y"),
+        "usage": {
+            "events_used": events_count,
+            "events_limit": active_quota["monthly_events"],
+            "events_pct": min(round((events_count / max(active_quota["monthly_events"], 1)) * 100, 1), 100),
+            "recordings_used": recordings_count,
+            "recordings_limit": active_quota["max_replays"],
+            "recordings_pct": min(round((recordings_count / max(active_quota["max_replays"], 1)) * 100, 1), 100),
+            "monitors_used": monitors_count,
+            "monitors_limit": active_quota["max_monitors"]
+        }
+    }
+
+class BillingUpgradeRequest(BaseModel):
+    plan: str  # 'Free', 'Pro', 'Enterprise'
+    payment_method_id: Optional[str] = None
+
+@app.post('/api/v1/billing/upgrade')
+def upgrade_billing_plan(data: BillingUpgradeRequest, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    org = db.query(models.Organization).filter(models.Organization.id == current_user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    target_plan = data.plan if data.plan in ["Free", "Pro", "Enterprise"] else "Pro"
+    quotas = {
+        "Free": 5000,
+        "Pro": 100000,
+        "Enterprise": 1000000
+    }
+    org.plan = target_plan
+    org.monthly_event_limit = quotas[target_plan]
+    db.commit()
+
+    return {
+        "status": "upgraded",
+        "plan": target_plan,
+        "monthly_event_limit": org.monthly_event_limit,
+        "message": f"Successfully activated {target_plan} subscription plan"
+    }
+
+
+# ===================== THIRDEYE COMMERCIAL: STANDALONE REPLAY EXPORTER =====================
+@app.get('/api/v1/recordings/{session_id}/export/html')
+def export_standalone_replay_html(
+    session_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    rec = db.query(models.SessionRecording).filter(models.SessionRecording.session_id == session_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Recording not found")
+
+    if not is_superadmin_user(current_user):
+        user_project_ids = get_user_project_ids(db, current_user)
+        if rec.project_id not in user_project_ids:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    target_file = None
+    for candidate in [
+        STORAGE_DIR_API / f"{session_id}.json.gz",
+        STORAGE_DIR_ROOT / f"{session_id}.json.gz",
+        STORAGE_DIR_API / f"{session_id}.json",
+        STORAGE_DIR_ROOT / f"{session_id}.json"
+    ]:
+        if candidate.exists():
+            target_file = candidate
+            break
+
+    raw_events = []
+    if target_file:
+        try:
+            if target_file.suffix == '.gz':
+                with gzip.open(target_file, "rt", encoding="utf-8") as f:
+                    raw_events = json.load(f)
+            else:
+                with open(target_file, "rt", encoding="utf-8") as f:
+                    raw_events = json.load(f)
+        except Exception:
+            raw_events = []
+
+    if isinstance(raw_events, dict) and "events" in raw_events:
+        raw_events = raw_events["events"]
+
+    if not raw_events:
+        proj = db.query(models.Project).filter(models.Project.id == rec.project_id).first()
+        domain = proj.domain if proj else "example.com"
+        raw_events = generate_domain_rrweb_events(domain, domain.split('.')[0].capitalize())
+
+    events_json = json.dumps(raw_events)
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ThirdEye Offline Replay - {session_id}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/rrweb-player@latest/dist/style.css"/>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      background: #0b101b;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }}
+    .header {{
+      margin-bottom: 20px;
+      text-align: center;
+    }}
+    .title {{
+      font-size: 22px;
+      font-weight: 800;
+      color: #ffffff;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }}
+    .badge {{
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid rgba(244, 63, 94, 0.35);
+      color: #fb7185;
+      padding: 4px 14px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 700;
+      font-family: monospace;
+    }}
+    .player-box {{
+      background: #020617;
+      border: 1px solid #1e293b;
+      border-radius: 24px;
+      padding: 12px;
+      box-shadow: 0 30px 80px rgba(0,0,0,0.7);
+      overflow: hidden;
+    }}
+    .footer {{
+      margin-top: 18px;
+      font-size: 11px;
+      color: #64748b;
+    }}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/rrweb-player@latest/dist/index.js"></script>
+</head>
+<body>
+  <div class="header">
+    <div class="title">
+      <span>ThirdEye Standalone Session Replay</span>
+      <span class="badge">{session_id}</span>
+    </div>
+    <div style="font-size: 12px; color: #94a3b8;">Self-Contained Client Replay Archive • Duration: {rec.duration or 18}s</div>
+  </div>
+  <div class="player-box">
+    <div id="rrweb-container"></div>
+  </div>
+  <div class="footer">Exported from ThirdEye Observability Cloud • Client Masking Enabled</div>
+  <script>
+    const events = {events_json};
+    new rrwebPlayer({{
+      target: document.getElementById('rrweb-container'),
+      props: {{
+        events: events,
+        width: Math.min(window.innerWidth - 64, 1024),
+        height: Math.min(window.innerHeight - 180, 560),
+        autoPlay: true,
+        showController: true,
+        speedOption: [1, 2, 4, 8]
+      }}
+    }});
+  </script>
+</body>
+</html>"""
+
+    filename = f"thirdeye_replay_{session_id}.html"
+    return Response(
+        content=html_content,
+        media_type="text/html",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
 
 

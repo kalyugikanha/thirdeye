@@ -19,6 +19,8 @@ class Organization(Base):
     __tablename__ = 'organizations'
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String)
+    plan = Column(String, default='Pro')
+    monthly_event_limit = Column(Integer, default=100000)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     users = relationship('User', back_populates='organization')

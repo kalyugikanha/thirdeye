@@ -28,7 +28,8 @@ import {
   X,
   Loader2,
   Radio,
-  FileText
+  FileText,
+  CreditCard
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiUrl, API_BASE } from '@/lib/api';
@@ -68,6 +69,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Intelligence & Reports",
     items: [
       { href: '/reports', icon: FileText, title: 'Executive Reports', badge: 'Export' },
+      { href: '/settings/billing', icon: CreditCard, title: 'Plans & Billing' },
       { href: '/settings/storage', icon: HardDrive, title: 'BYOS Storage Hub', badge: 'Client' },
       { href: '/marketing', icon: Share2, title: 'Marketing & Ads' },
       { href: '/alerts', icon: Bell, title: 'System Alerts' },
