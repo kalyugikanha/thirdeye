@@ -198,3 +198,55 @@ class LiveVisitor(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship('Project')
+
+
+class Goal(Base):
+    __tablename__ = 'goals'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    name = Column(String)
+    type = Column(String, default='url')  # 'url', 'click', 'custom'
+    target = Column(String)               # '/checkout', '#signup-btn', 'purchase'
+    revenue_usd = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    project = relationship('Project')
+
+
+class Feedback(Base):
+    __tablename__ = 'feedbacks'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    session_id = Column(String, index=True, nullable=True)
+    rating = Column(Integer, default=5)   # 1 to 5
+    sentiment = Column(String, default='positive')  # 'positive', 'neutral', 'negative'
+    comment = Column(String, nullable=True)
+    url = Column(String)
+    browser = Column(String, default='Chrome')
+    trigger = Column(String, default='widget')  # 'widget', 'rage_click', 'simulated'
+    created_at = Column(DateTime, default=datetime.utcnow)
+    project = relationship('Project')
+
+
+class FeedbackConfig(Base):
+    __tablename__ = 'feedback_configs'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), unique=True, index=True)
+    enabled = Column(Boolean, default=False)
+    prompt = Column(String, default='How is your experience?')
+    created_at = Column(DateTime, default=datetime.utcnow)
+    project = relationship('Project')
+
+
+class IncidentLog(Base):
+    __tablename__ = 'incident_logs'
+    id = Column(Integer, primary_key=True, index=True)
+    channel_id = Column(Integer, ForeignKey('alert_channels.id'), nullable=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    incident_key = Column(String, index=True, nullable=True)  # cooldown dedupe key
+    incident_type = Column(String)        # 'uptime_downtime', 'error_spike'
+    title = Column(String)
+    message = Column(String)
+    status = Column(String, default='delivered')  # 'delivered', 'failed', 'suppressed'
+    response_code = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

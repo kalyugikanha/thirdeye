@@ -16,7 +16,7 @@ import io
 from dotenv import load_dotenv
 load_dotenv()  # Load .env file so GEMINI_API_KEY is available
 from app.database import engine, Base, get_db
-from app import models, auth
+from app import models, auth, enterprise
 from pydantic import BaseModel
 try:
     import email_validator
@@ -111,6 +111,7 @@ for _db_path in [BASE_DIR / "thirdeye.db", ROOT_DIR / "thirdeye.db"]:
             pass
 
 app = FastAPI(title='ThirdEye AI Workspace API')
+app.include_router(enterprise.router)
 
 @app.middleware("http")
 async def cors_middleware(request: Request, call_next):
@@ -421,6 +422,8 @@ def track_event(event: EventCreate, request: Request, db: Session = Depends(get_
     db.add(db_event)
     db.commit()
     update_live_visitor_presence(db, project.id, event.session_id, event.url, event.referrer, event.properties)
+    if event.event_type == 'code_error':
+        enterprise.check_error_spike(db, project.id)
     return {'status': 'tracked'}
 
 # --- SESSION RECORDINGS (MOCK S3 & METADATA + AUTOMATIC EVENT EXTRACTION) ---
@@ -1929,6 +1932,12 @@ def check_monitor(monitor_id: int, db: Session = Depends(get_db), current_user: 
         db.add(notif)
     monitor.last_checked = dt2.utcnow()
     db.commit()
+    if monitor.status == "down":
+        enterprise.dispatch_incident_webhook(
+            db, monitor.project_id, f"Monitor DOWN: {monitor.name}",
+            f"{monitor.url} is unreachable: {monitor.error_message}", "uptime_downtime",
+            {"URL": monitor.url, "Response time": f"{monitor.response_time_ms} ms"},
+            incident_key=f"uptime_downtime:monitor:{monitor.id}")
     ssl_data = get_ssl_details(monitor.url) if monitor.url and monitor.url.startswith('https') else {"valid": False, "days_remaining": 0, "issuer": "None"}
     return {
         "status": monitor.status,

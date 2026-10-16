@@ -29,7 +29,9 @@ import {
   Loader2,
   Radio,
   FileText,
-  CreditCard
+  CreditCard,
+  Target,
+  Smile
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiUrl, API_BASE } from '@/lib/api';
@@ -55,6 +57,9 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/analytics/sessions', icon: Video, title: 'Session Replays', badge: 'Replay', lockedUnlessConnected: true },
       { href: '/analytics/heatmaps', icon: Flame, title: 'Click Heatmaps', lockedUnlessConnected: true },
       { href: '/analytics/errors', icon: AlertTriangle, title: 'Errors & Issues', badge: 'BugTracker' },
+      { href: '/analytics/journeys', icon: GitMerge, title: 'User Journey Flows', badge: 'Flow' },
+      { href: '/analytics/goals', icon: Target, title: 'Conversion Goals', badge: 'ROI' },
+      { href: '/analytics/feedback', icon: Smile, title: 'Customer Feedback', badge: 'CSAT' },
     ]
   },
   {

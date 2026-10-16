@@ -213,6 +213,7 @@
   var lastClick = { time: 0, target: null, count: 0 };
   document.addEventListener('click', function(e) {
     try {
+      if (e.target && e.target.closest && e.target.closest('#te-feedback-root')) return;
       var x = Math.round((e.pageX / Math.max(window.innerWidth, 1)) * 100);
       var y = Math.round((e.pageY / Math.max(document.documentElement.scrollHeight, window.innerHeight, 1)) * 100);
       var targetTag = e.target ? (e.target.tagName || '').toLowerCase() : '';
@@ -222,7 +223,8 @@
         x: x,
         y: y,
         tag: targetTag,
-        text: targetText
+        text: targetText,
+        selectors: buildSelectors(e.target)
       });
 
       // Detect Rage Clicks: 3+ rapid clicks on same element within 500ms
@@ -237,12 +239,146 @@
             y: y,
             clicks: lastClick.count
           });
+          openFeedback('rage_click');
         }
       } else {
         lastClick = { time: now, target: e.target, count: 1 };
       }
     } catch (clickErr) {}
   }, true);
+
+  // CSS selectors (#id, .class, tag) of the clicked element and its ancestors, used by click goals
+  function buildSelectors(node) {
+    var out = [];
+    var depth = 0;
+    while (node && node.nodeType === 1 && depth < 4) {
+      var tag = (node.tagName || '').toLowerCase();
+      if (node.id) out.push('#' + node.id);
+      if (typeof node.className === 'string' && node.className.trim()) {
+        node.className.trim().split(/\s+/).slice(0, 3).forEach(function(c) { out.push('.' + c); });
+      }
+      out.push(tag);
+      node = node.parentElement;
+      depth++;
+    }
+    return out;
+  }
+
+  // 8b. Customer feedback widget (CSAT). Enabled per project from the ThirdEye dashboard.
+  var feedbackCfg = { enabled: false, prompt: 'How is your experience?' };
+  var feedbackRoot = null;
+  var lastRagePrompt = 0;
+
+  function mk(tag, styles, text) {
+    var n = document.createElement(tag);
+    if (styles) n.style.cssText = styles;
+    if (text) n.textContent = text;
+    return n;
+  }
+
+  function closeFeedback() {
+    if (feedbackRoot) { feedbackRoot.remove(); feedbackRoot = null; }
+    renderPill();
+  }
+
+  function renderPill() {
+    if (!feedbackCfg.enabled || document.getElementById('te-feedback-root')) return;
+    feedbackRoot = mk('div', 'position:fixed;right:20px;bottom:20px;z-index:2147483647;font-family:system-ui,-apple-system,Segoe UI,sans-serif;');
+    feedbackRoot.id = 'te-feedback-root';
+    var pill = mk('button', 'background:#0f172a;color:#fff;border:0;border-radius:999px;padding:10px 18px;font-size:13px;font-weight:600;cursor:pointer;box-shadow:0 6px 20px rgba(15,23,42,.35);border-bottom:2px solid #F43F5E;', 'Feedback');
+    pill.addEventListener('click', function() { openFeedback('widget'); });
+    feedbackRoot.appendChild(pill);
+    document.body.appendChild(feedbackRoot);
+  }
+
+  function openFeedback(trigger) {
+    if (!feedbackCfg.enabled) return;
+    if (trigger === 'rage_click') {
+      if (Date.now() - lastRagePrompt < 60000) return;  // at most one automatic prompt per minute
+      lastRagePrompt = Date.now();
+    }
+    var existing = document.getElementById('te-feedback-root');
+    if (existing) existing.remove();
+
+    var rating = 0;
+    feedbackRoot = mk('div', 'position:fixed;right:20px;bottom:20px;z-index:2147483647;width:300px;background:#fff;border-radius:14px;box-shadow:0 12px 40px rgba(15,23,42,.28);border-top:3px solid #F43F5E;padding:16px;font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#0f172a;');
+    feedbackRoot.id = 'te-feedback-root';
+    var title = trigger === 'rage_click' ? 'Notice an issue? Let our team know.' : feedbackCfg.prompt;
+    feedbackRoot.appendChild(mk('div', 'font-size:14px;font-weight:700;margin-bottom:10px;', title));
+
+    var stars = mk('div', 'display:flex;gap:6px;margin-bottom:10px;');
+    var starBtns = [];
+    for (var i = 1; i <= 5; i++) {
+      (function(v) {
+        var b = mk('button', 'background:none;border:0;font-size:24px;cursor:pointer;color:#cbd5e1;padding:0;line-height:1;', '\u2605');
+        b.setAttribute('aria-label', v + ' star');
+        b.addEventListener('click', function() {
+          rating = v;
+          starBtns.forEach(function(s, idx) { s.style.color = idx < v ? '#F59E0B' : '#cbd5e1'; });
+        });
+        starBtns.push(b);
+        stars.appendChild(b);
+      })(i);
+    }
+    feedbackRoot.appendChild(stars);
+
+    var box = mk('textarea', 'width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px;font-size:13px;resize:none;height:64px;margin-bottom:10px;font-family:inherit;');
+    box.placeholder = 'Tell us more (optional)';
+    box.maxLength = 500;
+    box.setAttribute('data-te-mask', '1');
+    feedbackRoot.appendChild(box);
+
+    var msg = mk('div', 'font-size:12px;color:#e11d48;min-height:14px;margin-bottom:6px;');
+    feedbackRoot.appendChild(msg);
+
+    var row = mk('div', 'display:flex;gap:8px;justify-content:flex-end;');
+    var cancel = mk('button', 'background:#f1f5f9;border:0;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;', 'Cancel');
+    var send = mk('button', 'background:#F43F5E;color:#fff;border:0;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;', 'Send');
+    cancel.addEventListener('click', closeFeedback);
+    send.addEventListener('click', function() {
+      if (!rating) { msg.textContent = 'Please choose a rating.'; return; }
+      send.disabled = true;
+      fetch(apiHost + '/api/v1/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          api_key: apiKey,
+          rating: rating,
+          comment: box.value,
+          url: window.location.href,
+          session_id: sessionId,
+          trigger: trigger,
+          browser: getClientMeta().browser
+        })
+      }).then(function(r) {
+        if (!r.ok) throw new Error('status ' + r.status);
+        feedbackRoot.textContent = '';
+        feedbackRoot.appendChild(mk('div', 'font-size:14px;font-weight:600;text-align:center;padding:8px 0;', 'Thank you for your feedback!'));
+        setTimeout(closeFeedback, 1800);
+      }).catch(function() {
+        send.disabled = false;
+        msg.textContent = 'Could not send feedback. Please try again.';
+      });
+    });
+    row.appendChild(cancel);
+    row.appendChild(send);
+    feedbackRoot.appendChild(row);
+    document.body.appendChild(feedbackRoot);
+  }
+
+  function initFeedback() {
+    if (!apiKey) return;
+    fetch(apiHost + '/api/v1/feedback/config?api_key=' + encodeURIComponent(apiKey))
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(cfg) {
+        if (cfg && cfg.enabled) {
+          feedbackCfg = cfg;
+          if (document.body) renderPill();
+          else document.addEventListener('DOMContentLoaded', renderPill);
+        }
+      }).catch(function() {});
+  }
+  initFeedback();
 
   // 9. Code-Level Error Monitoring (JS Exceptions & Unhandled Promises)
   window.addEventListener('error', function(e) {
