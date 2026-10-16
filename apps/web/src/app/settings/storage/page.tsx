@@ -27,6 +27,8 @@ export default function StorageSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [copiedFolder, setCopiedFolder] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [testResult, setTestResult] = useState<{ status: string; latency_ms: number; message: string; permissions?: string[] } | null>(null);
 
   // Form states
   const [provider, setProvider] = useState<'thirdeye_cloud' | 's3' | 'r2' | 'custom_webhook'>('thirdeye_cloud');
@@ -61,6 +63,40 @@ export default function StorageSettingsPage() {
       .catch((err) => console.error('Failed to load storage config:', err))
       .finally(() => setLoading(false));
   }, []);
+
+  const handleTestConnection = async () => {
+    setTestingConnection(true);
+    setTestResult(null);
+    const token = localStorage.getItem('te_token');
+    try {
+      const res = await fetch(apiUrl('/api/v1/storage/test-connection'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          provider,
+          bucket_name: bucketName,
+          endpoint_url: endpointUrl,
+          access_key: accessKey,
+          secret_key: secretKey,
+          region,
+          webhook_url: webhookUrl
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTestResult(data);
+      } else {
+        alert(data.detail || 'Connection test failed.');
+      }
+    } catch (e) {
+      alert('Network error testing storage connection.');
+    } finally {
+      setTestingConnection(false);
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -354,8 +390,33 @@ export default function StorageSettingsPage() {
                 </div>
               )}
 
-              {/* Submit Button */}
-              <div className="pt-4 flex items-center justify-between border-t border-slate-100">
+              {/* Test Connection Feedback Box */}
+              {testResult && (
+                <div className="p-4 rounded-2xl bg-emerald-50/80 border border-emerald-200/80 text-xs text-emerald-900 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      {testResult.message}
+                    </span>
+                    <span className="text-[10px] font-mono font-bold bg-white px-2 py-0.5 rounded-full border border-emerald-200">
+                      {testResult.latency_ms}ms ping
+                    </span>
+                  </div>
+                  {testResult.permissions && (
+                    <div className="text-[11px] text-emerald-700 flex flex-wrap gap-2 pt-1">
+                      <span className="font-semibold">Verified IAM Permissions:</span>
+                      {testResult.permissions.map((p) => (
+                        <code key={p} className="bg-emerald-100/70 px-1.5 py-0.5 rounded font-mono text-[10px]">
+                          {p}
+                        </code>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Submit Buttons */}
+              <div className="pt-4 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-100">
                 <div className="text-xs text-slate-500">
                   {saveSuccess && (
                     <span className="text-emerald-600 font-semibold flex items-center gap-1">
@@ -364,23 +425,44 @@ export default function StorageSettingsPage() {
                   )}
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center gap-2 shadow-sm transition-all disabled:opacity-50"
-                >
-                  {saving ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Saving BYOS Settings...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Save className="w-3.5 h-3.5" />
-                      <span>Save Storage Settings</span>
-                    </>
-                  )}
-                </button>
+                <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={handleTestConnection}
+                    disabled={testingConnection}
+                    className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                  >
+                    {testingConnection ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Pinging Bucket...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Server className="w-3.5 h-3.5 text-slate-600" />
+                        <span>Test Connection</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition-all disabled:opacity-50 flex-1 sm:flex-initial"
+                  >
+                    {saving ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Saving BYOS Settings...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-3.5 h-3.5" />
+                        <span>Save Storage Settings</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
 
             </form>

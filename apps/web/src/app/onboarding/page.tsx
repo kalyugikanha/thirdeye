@@ -36,6 +36,10 @@ export default function OnboardingPage() {
   const [projectName, setProjectName] = useState('');
   const [domain, setDomain] = useState('');
   const [apiKey, setApiKey] = useState('');
+  const [dnsToken, setDnsToken] = useState('');
+  const [dnsVerified, setDnsVerified] = useState(false);
+  const [verifyingDns, setVerifyingDns] = useState(false);
+  const [dnsFeedback, setDnsFeedback] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -48,16 +52,19 @@ export default function OnboardingPage() {
 
     const loadProjects = async () => {
       try {
-        const res = await fetch(apiUrl('/api/projects'), {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (res.status === 401) {
+        const [projRes, statusRes] = await Promise.all([
+          fetch(apiUrl('/api/projects'), { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(apiUrl('/api/v1/projects/status'), { headers: { Authorization: `Bearer ${token}` } })
+        ]);
+
+        if (projRes.status === 401 || statusRes.status === 401) {
           localStorage.removeItem('te_token');
           router.push('/login');
           return;
         }
-        if (res.ok) {
-          const projects = await res.json();
+
+        if (projRes.ok) {
+          const projects = await projRes.json();
           if (Array.isArray(projects) && projects.length > 0) {
             const p = projects[0];
             setActiveProject(p);
@@ -65,6 +72,12 @@ export default function OnboardingPage() {
             setDomain(p.domain || '');
             if (p.api_key) setApiKey(p.api_key);
           }
+        }
+
+        if (statusRes.ok) {
+          const statusData = await statusRes.json();
+          if (statusData.dns_token) setDnsToken(statusData.dns_token);
+          setDnsVerified(Boolean(statusData.dns_verified));
         }
       } catch (err) {
         console.error('Failed to load project details:', err);
@@ -75,6 +88,33 @@ export default function OnboardingPage() {
 
     loadProjects();
   }, [router]);
+
+  const handleVerifyDns = async (simulate = false) => {
+    setVerifyingDns(true);
+    setDnsFeedback(null);
+    const token = localStorage.getItem('te_token');
+    try {
+      const res = await fetch(apiUrl('/api/v1/projects/verify-dns'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ domain, simulate })
+      });
+      const data = await res.json();
+      if (data.dns_verified) {
+        setDnsVerified(true);
+        setDnsFeedback('DNS ownership verified successfully!');
+      } else {
+        setDnsFeedback(data.details || 'DNS TXT record not found yet. Please check DNS propagation.');
+      }
+    } catch (e) {
+      setDnsFeedback('Failed to reach DNS verification service.');
+    } finally {
+      setVerifyingDns(false);
+    }
+  };
 
   // Handle Domain & Name Update
   const handleSaveSettings = async (e: React.FormEvent) => {
@@ -329,7 +369,73 @@ export default function OnboardingPage() {
             </div>
           </div>
 
-          {/* CARD 3: WordPress Quick Guide */}
+          {/* CARD 3: Universal DNS TXT Record Verification */}
+          <div className="bg-white rounded-3xl p-6 lg:p-8 border border-slate-200/80 shadow-sm space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                  <Globe2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900">Domain Ownership DNS Verification</h2>
+                  <p className="text-xs text-slate-400">
+                    Add a TXT record to your DNS provider (Cloudflare, GoDaddy, Route53) to verify domain authority.
+                  </p>
+                </div>
+              </div>
+
+              {dnsVerified ? (
+                <span className="flex items-center gap-1.5 font-bold text-xs text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> DNS Verified
+                </span>
+              ) : (
+                <span className="text-xs font-semibold text-amber-700 bg-amber-50 px-3 py-1 rounded-full border border-amber-200">
+                  Pending Verification
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono pt-2">
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                <span className="text-[10px] text-slate-400 block font-sans font-semibold mb-1">Record Type & Host / Name</span>
+                <span className="font-bold text-slate-800">TXT</span> • _thirdeye-challenge.{domain || 'yourdomain.com'}
+              </div>
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                <span className="text-[10px] text-slate-400 block font-sans font-semibold mb-1">Record Value / Token</span>
+                <span className="font-bold text-indigo-700">{dnsToken || 'te_txt_verification_token'}</span>
+              </div>
+            </div>
+
+            {dnsFeedback && (
+              <p className={`text-xs font-semibold ${dnsFeedback.includes('successfully') ? 'text-emerald-600' : 'text-amber-700'}`}>
+                {dnsFeedback}
+              </p>
+            )}
+
+            <div className="flex items-center gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => handleVerifyDns(false)}
+                disabled={verifyingDns}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-sm disabled:opacity-50"
+              >
+                {verifyingDns ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Globe2 className="w-3.5 h-3.5" />}
+                <span>Verify DNS TXT Record</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleVerifyDns(true)}
+                disabled={verifyingDns}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors"
+                title="Bypass in sandbox environment"
+              >
+                <span>Sandbox Verification Bypass</span>
+              </button>
+            </div>
+          </div>
+
+          {/* CARD 4: WordPress Quick Guide */}
           <div className="bg-gradient-to-r from-blue-50 to-indigo-50/60 rounded-3xl p-6 lg:p-8 border border-blue-100">
             <h3 className="font-bold text-slate-900 text-base mb-4 flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-blue-600" /> How to install in WordPress (2 Simple Steps):

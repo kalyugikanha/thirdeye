@@ -172,6 +172,57 @@ export default function WorkspaceDashboard() {
     setTimeout(() => setCopiedSnippet(false), 2500);
   };
 
+  const [verifyingDns, setVerifyingDns] = useState(false);
+  const [dnsResult, setDnsResult] = useState<string | null>(null);
+  const [simulating, setSimulating] = useState(false);
+
+  const handleVerifyDns = async (simulate = false) => {
+    setVerifyingDns(true);
+    setDnsResult(null);
+    const token = typeof window !== 'undefined' ? localStorage.getItem('te_token') : null;
+    try {
+      const res = await fetch(apiUrl('/api/v1/projects/verify-dns'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ domain: status.domain, simulate })
+      });
+      const data = await res.json();
+      if (data.dns_verified) {
+        setDnsResult('DNS Ownership Verified Successfully!');
+        setStatus(prev => ({ ...prev, dns_verified: true, is_connected: true }));
+      } else {
+        setDnsResult(data.details || 'DNS TXT record not found yet. Please allow a few minutes for propagation.');
+      }
+    } catch (e) {
+      setDnsResult('Failed to reach DNS verification service.');
+    } finally {
+      setVerifyingDns(false);
+    }
+  };
+
+  const handleSimulate = async () => {
+    setSimulating(true);
+    const token = typeof window !== 'undefined' ? localStorage.getItem('te_token') : null;
+    try {
+      const res = await fetch(apiUrl('/api/v1/recordings/simulate'), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        await fetchConnectionStatus();
+      } else {
+        alert('Simulation failed. Please try again.');
+      }
+    } catch (e) {
+      alert('Error connecting to simulation service.');
+    } finally {
+      setSimulating(false);
+    }
+  };
+
   const playReplay = async (session: RecentSession) => {
     setActiveSession(session);
     setLoadingReplay(true);
@@ -590,43 +641,162 @@ export default function WorkspaceDashboard() {
                 </div>
               </div>
             ) : (
-              /* Guided Activation Lock Gateway (Requested by User) */
-              <div className="max-w-2xl mx-auto bg-amber-50/70 border border-amber-200/80 rounded-3xl p-5 sm:p-6 shadow-sm mb-8">
-                <div className="flex items-start gap-3.5">
-                  <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center flex-shrink-0 shadow-sm">
-                    <Lock className="w-5 h-5" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <h4 className="font-bold text-sm text-slate-900">
-                        Activation Required for {status.domain || 'Your Domain'}
-                      </h4>
-                      <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full border border-amber-200">
-                        Features Locked
-                      </span>
+              /* 3-Step Interactive Guided Onboarding Tour (Requested by User) */
+              <div className="max-w-2xl mx-auto bg-white/95 border border-slate-200/80 rounded-3xl p-6 sm:p-7 shadow-md mb-8 space-y-6">
+                <div className="flex items-start justify-between gap-4 pb-4 border-b border-slate-100">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 to-rose-500 text-white flex items-center justify-center font-bold shadow-sm">
+                      <Lock className="w-5 h-5" />
                     </div>
-                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                      Session Replays, Click Heatmaps, and Traffic Analytics will automatically unlock as soon as your tracking script tag is placed in your site's <code className="bg-amber-100/70 px-1 py-0.5 rounded text-amber-900 font-mono text-[11px]">&lt;head&gt;</code>.
-                    </p>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-sm text-slate-900">
+                          Interactive Activation Guide for {status.domain || 'Your Workspace'}
+                        </h4>
+                        <span className="text-[10px] bg-amber-50 text-amber-800 font-bold px-2 py-0.5 rounded-full border border-amber-200">
+                          Setup In Progress
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Complete any step below to activate session replays, click heatmaps, and error intelligence.
+                      </p>
+                    </div>
+                  </div>
 
-                    <div className="mt-4 flex flex-wrap gap-2.5">
+                  <button
+                    onClick={handleSimulate}
+                    disabled={simulating}
+                    className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-600 hover:to-orange-600 text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-50 flex-shrink-0"
+                  >
+                    {simulating ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Simulating...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>1-Click Test Drive</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* 3 Step Cards */}
+                <div className="space-y-4">
+                  {/* Step 1: Client Tracking Tag */}
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-full bg-slate-900 text-white text-[11px] font-bold flex items-center justify-center">
+                          1
+                        </span>
+                        <span className="text-xs font-bold text-slate-900">Install Client Tracking Tag</span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-medium">Recommended</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Copy and place this script inside your website HTML <code className="bg-white px-1 py-0.5 rounded text-slate-700 font-mono text-[10px] border border-slate-200">&lt;head&gt;</code>. It records visitor DOM mutations without blocking page render.
+                    </p>
+                    <div className="bg-slate-950 text-slate-200 p-3 rounded-xl font-mono text-[11px] truncate shadow-inner">
+                      {`<script src="${API_BASE}/public/te.js" data-key="${status.api_key || 'your_api_key'}"></script>`}
+                    </div>
+                    <div className="flex items-center gap-2 pt-1">
                       <button
                         onClick={copySnippet}
-                        className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all"
+                        className="px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm"
                       >
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>{copiedSnippet ? 'Snippet Copied!' : 'Copy Tracking Tag'}</span>
+                        {copiedSnippet ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copiedSnippet ? 'Snippet Copied!' : 'Copy Script Tag'}</span>
                       </button>
 
                       <button
                         onClick={handleManualVerify}
                         disabled={verifying}
-                        className="px-4 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-800 border border-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                        className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors"
                       >
                         <RefreshCw className={`w-3.5 h-3.5 ${verifying ? 'animate-spin text-amber-600' : ''}`} />
                         <span>Check Connection</span>
                       </button>
                     </div>
+                  </div>
+
+                  {/* Step 2: DNS Ownership Verification */}
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[11px] font-bold flex items-center justify-center">
+                          2
+                        </span>
+                        <span className="text-xs font-bold text-slate-900">Verify Universal DNS TXT Record</span>
+                      </div>
+                      {status.dns_verified ? (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" /> DNS Verified
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-indigo-600 font-semibold">Zero-Trust Security</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Add a DNS TXT record to prove ownership of <span className="font-semibold text-slate-700">{status.domain || 'your domain'}</span>:
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-mono">
+                      <div className="p-2.5 rounded-xl bg-white border border-slate-200 truncate">
+                        <span className="text-[10px] text-slate-400 block font-sans">TXT Record Name:</span>
+                        _thirdeye-challenge.{status.domain || 'yourdomain.com'}
+                      </div>
+                      <div className="p-2.5 rounded-xl bg-white border border-slate-200 truncate">
+                        <span className="text-[10px] text-slate-400 block font-sans">TXT Record Value:</span>
+                        {status.dns_token || 'te_txt_challenge_token'}
+                      </div>
+                    </div>
+                    {dnsResult && (
+                      <p className={`text-[11px] font-semibold ${dnsResult.includes('Successfully') ? 'text-emerald-600' : 'text-amber-700'}`}>
+                        {dnsResult}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        onClick={() => handleVerifyDns(false)}
+                        disabled={verifyingDns}
+                        className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                      >
+                        {verifyingDns ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Globe2 className="w-3.5 h-3.5" />}
+                        <span>Verify DNS Challenge</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleVerifyDns(true)}
+                        disabled={verifyingDns}
+                        className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-semibold transition-colors"
+                        title="Simulate DNS verification in sandbox"
+                      >
+                        <span>Demo Bypass</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Step 3: BYOS Client-Owned Storage */}
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 h-5 rounded-full bg-amber-600 text-white text-[11px] font-bold flex items-center justify-center">
+                          3
+                        </span>
+                        <span className="text-xs font-bold text-slate-900">Client-Owned Video Storage (BYOS)</span>
+                      </div>
+                      <Link
+                        href="/settings/storage"
+                        className="text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center gap-1"
+                      >
+                        <span>Configure S3 / R2</span>
+                        <ChevronRight className="w-3 h-3" />
+                      </Link>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Store high-fidelity visitor session recordings directly on your own AWS S3 or Cloudflare R2 bucket with zero video retention on ThirdEye servers.
+                    </p>
                   </div>
                 </div>
               </div>

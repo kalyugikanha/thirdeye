@@ -85,6 +85,33 @@ export default function SuperAdminPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [impersonatingId, setImpersonatingId] = useState<number | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [tenantPlans, setTenantPlans] = useState<Record<number, string>>({});
+  const [tenantActive, setTenantActive] = useState<Record<number, boolean>>({});
+
+  const handleUpdatePlan = async (orgId: number, plan: string) => {
+    setTenantPlans(prev => ({ ...prev, [orgId]: plan }));
+    const token = localStorage.getItem('te_token');
+    try {
+      await fetch(apiUrl(`/api/v1/admin/tenants/${orgId}/plan`), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ plan })
+      });
+    } catch (e) {}
+  };
+
+  const handleToggleStatus = async (orgId: number, currentStatus: boolean) => {
+    const newStatus = !currentStatus;
+    setTenantActive(prev => ({ ...prev, [orgId]: newStatus }));
+    const token = localStorage.getItem('te_token');
+    try {
+      await fetch(apiUrl(`/api/v1/admin/tenants/${orgId}/status`), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ is_active: newStatus })
+      });
+    } catch (e) {}
+  };
 
   const fetchAdminData = async () => {
     setLoading(true);
@@ -698,6 +725,45 @@ export default function SuperAdminPage() {
                         </button>
                       </div>
 
+                    </div>
+
+                    {/* Enterprise Plan & Status Controls */}
+                    <div className="mt-4 pt-4 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs">
+                      <div className="flex flex-wrap items-center gap-4">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] uppercase font-bold text-slate-400">Subscription Plan:</span>
+                          <select
+                            value={tenantPlans[org.id] || (org.id === 1 ? 'Enterprise' : 'Pro')}
+                            onChange={(e) => handleUpdatePlan(org.id, e.target.value)}
+                            className="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-xl px-2.5 py-1 focus:outline-none focus:border-blue-500 font-semibold"
+                          >
+                            <option value="Free">Free Tier (50K events/mo)</option>
+                            <option value="Pro">Pro Tier (500K events/mo)</option>
+                            <option value="Enterprise">Enterprise (Unlimited + BYOS)</option>
+                          </select>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] uppercase font-bold text-slate-400">Storage BYOS:</span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                            {org.id === 1 ? 'Client AWS S3' : 'ThirdEye Dedicated'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Status:</span>
+                        <button
+                          onClick={() => handleToggleStatus(org.id, tenantActive[org.id] !== false)}
+                          className={`px-3 py-1 rounded-xl text-[10px] font-bold border transition-colors ${
+                            tenantActive[org.id] !== false
+                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
+                              : 'bg-rose-500/10 text-rose-400 border-rose-500/20 hover:bg-rose-500/20'
+                          }`}
+                        >
+                          {tenantActive[org.id] !== false ? '● Active' : '● Suspended'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
