@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text
+from sqlalchemy import func, text, or_
 from datetime import datetime, timedelta
 from pathlib import Path
 import urllib.request
@@ -1263,6 +1263,242 @@ def get_analytics_timeseries(db: Session = Depends(get_db), current_user: models
             'sessions': visitors
         })
     return data
+
+# ===================== CODE & LAYOUT ERROR INTELLIGENCE =====================
+@app.get('/api/v1/analytics/errors')
+def get_analytics_errors(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    project_ids = get_user_project_ids(db, current_user)
+    if not project_ids:
+        return {
+            "summary": {"code_errors": 0, "layout_errors": 0, "slow_apis": 0, "rage_clicks": 0, "health_score": 100},
+            "code_errors": [],
+            "layout_errors": [],
+            "slow_apis": [],
+            "rage_clicks": [],
+            "recommendations": []
+        }
+
+    # 1. Fetch code_error events (JS runtime exceptions, unhandled promises)
+    raw_code_errors = db.query(models.Event).filter(
+        models.Event.project_id.in_(project_ids),
+        models.Event.event_type == 'code_error'
+    ).order_by(models.Event.created_at.desc()).limit(100).all()
+
+    code_groups = {}
+    for ev in raw_code_errors:
+        props = ev.properties or {}
+        msg = props.get("message") or "Unknown Script Error"
+        sig = f"{msg}:{props.get('filename', '')}:{props.get('lineno', 0)}"
+        if sig not in code_groups:
+            code_groups[sig] = {
+                "id": ev.id,
+                "message": msg,
+                "filename": props.get("filename", ""),
+                "lineno": props.get("lineno", 0),
+                "colno": props.get("colno", 0),
+                "stack": props.get("stack", ""),
+                "type": props.get("type", "js_exception"),
+                "url": ev.url,
+                "count": 0,
+                "last_seen": ev.created_at.isoformat() if ev.created_at else None,
+                "browser": (props.get("browser") or "Chrome"),
+                "os": (props.get("os") or "Windows")
+            }
+        code_groups[sig]["count"] += 1
+    
+    code_errors_list = list(code_groups.values())
+
+    # 2. Fetch layout_error events (viewport horizontal overflows, broken assets)
+    raw_layout_errors = db.query(models.Event).filter(
+        models.Event.project_id.in_(project_ids),
+        models.Event.event_type == 'layout_error'
+    ).order_by(models.Event.created_at.desc()).limit(50).all()
+
+    layout_groups = {}
+    for ev in raw_layout_errors:
+        props = ev.properties or {}
+        l_type = props.get("type") or "horizontal_overflow"
+        sig = f"{l_type}:{ev.url}"
+        if sig not in layout_groups:
+            layout_groups[sig] = {
+                "id": ev.id,
+                "type": l_type,
+                "url": ev.url,
+                "scroll_width": props.get("scroll_width", 0),
+                "viewport_width": props.get("viewport_width", 0),
+                "count": 0,
+                "last_seen": ev.created_at.isoformat() if ev.created_at else None
+            }
+        layout_groups[sig]["count"] += 1
+    
+    layout_errors_list = list(layout_groups.values())
+
+    # 3. Fetch slow APM traces (>500ms or status >= 500)
+    slow_traces = db.query(models.APMTrace).filter(
+        models.APMTrace.project_id.in_(project_ids),
+        or_(models.APMTrace.duration_ms >= 500, models.APMTrace.status_code >= 500)
+    ).order_by(models.APMTrace.created_at.desc()).limit(50).all()
+
+    slow_apis_list = [
+        {
+            "id": t.id,
+            "endpoint": t.endpoint,
+            "method": t.method,
+            "duration_ms": t.duration_ms,
+            "status_code": t.status_code,
+            "error_detail": t.error_detail,
+            "created_at": t.created_at.isoformat() if t.created_at else None
+        }
+        for t in slow_traces
+    ]
+
+    # 4. Fetch rage clicks
+    raw_rage = db.query(models.Event).filter(
+        models.Event.project_id.in_(project_ids),
+        models.Event.event_type == 'rage_click'
+    ).order_by(models.Event.created_at.desc()).limit(50).all()
+
+    rage_list = [
+        {
+            "id": r.id,
+            "url": r.url,
+            "tag": (r.properties or {}).get("tag", "element"),
+            "text": (r.properties or {}).get("text", ""),
+            "clicks": (r.properties or {}).get("clicks", 3),
+            "created_at": r.created_at.isoformat() if r.created_at else None
+        }
+        for r in raw_rage
+    ]
+
+    # 5. Diagnostic recommendations
+    recommendations = []
+    if code_errors_list:
+        sample_err = code_errors_list[0]
+        recommendations.append({
+            "title": f"Fix JavaScript Runtime Exception in {sample_err['message'][:40]}...",
+            "severity": "high",
+            "category": "Code Quality",
+            "description": f"Encountered {sum(e['count'] for e in code_errors_list)} unhandled exceptions on URL {sample_err['url']}.",
+            "action": "Wrap DOM query selectors or asynchronous fetches with try/catch and optional chaining (?.) to prevent execution interruption."
+        })
+    if layout_errors_list:
+        recommendations.append({
+            "title": "Resolve Mobile Viewport Horizontal Overflow",
+            "severity": "medium",
+            "category": "Responsive UI/UX",
+            "description": "Elements on your site exceed screen width, causing awkward horizontal scrolling on mobile/tablet viewports.",
+            "action": "Add 'overflow-x: hidden' to root body wrapper, or check containers with fixed pixel widths (>100vw)."
+        })
+    if slow_apis_list:
+        slowest = max(slow_apis_list, key=lambda x: x["duration_ms"])
+        recommendations.append({
+            "title": f"Optimize Slow Endpoint: {slowest['method']} {slowest['endpoint']} ({slowest['duration_ms']}ms)",
+            "severity": "high" if slowest['duration_ms'] > 1000 else "medium",
+            "category": "API Performance",
+            "description": f"Endpoint latency exceeds the 500ms target threshold.",
+            "action": "Implement Redis response caching (TTL: 60s), index database query filters, or split payload into paginated chunks."
+        })
+    if rage_list:
+        recommendations.append({
+            "title": f"Inspect Frustration Trigger on '{rage_list[0]['tag']}' element",
+            "severity": "medium",
+            "category": "UX Interaction",
+            "description": f"Visitors repeatedly clicked on element '{rage_list[0]['text'] or rage_list[0]['tag']}' expecting an interactive response.",
+            "action": "Provide visual loading states (spinners) or verify pointer cursor styling."
+        })
+
+    # Calculate overall health score (0-100)
+    deductions = (len(code_errors_list) * 10) + (len(layout_errors_list) * 5) + (len(slow_apis_list) * 8) + (len(rage_list) * 4)
+    health_score = max(25, 100 - deductions)
+
+    return {
+        "summary": {
+            "code_errors": len(code_errors_list),
+            "layout_errors": len(layout_errors_list),
+            "slow_apis": len(slow_apis_list),
+            "rage_clicks": len(rage_list),
+            "health_score": health_score
+        },
+        "code_errors": code_errors_list,
+        "layout_errors": layout_errors_list,
+        "slow_apis": slow_apis_list,
+        "rage_clicks": rage_list,
+        "recommendations": recommendations
+    }
+
+@app.post('/api/v1/analytics/errors/simulate')
+def simulate_sample_errors(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    projects = get_user_projects(db, current_user)
+    if not projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project = projects[0]
+    domain = project.domain or "example.com"
+    sess_id = f"sim_err_{uuid.uuid4().hex[:8]}"
+
+    # 1. Code error
+    err_event = models.Event(
+        project_id=project.id,
+        event_type="code_error",
+        url=f"https://{domain}/checkout",
+        session_id=sess_id,
+        properties={
+            "message": "TypeError: Cannot read properties of undefined (reading 'checkoutToken')",
+            "filename": f"https://{domain}/assets/checkout.bundle.js",
+            "lineno": 142,
+            "colno": 28,
+            "stack": f"TypeError: Cannot read properties of undefined (reading 'checkoutToken')\n    at renderCheckout (https://{domain}/assets/checkout.bundle.js:142:28)\n    at initCart (https://{domain}/assets/app.js:88:12)",
+            "browser": "Chrome 122",
+            "os": "Windows 11"
+        },
+        created_at=datetime.utcnow() - timedelta(minutes=14)
+    )
+
+    # 2. Layout error
+    layout_event = models.Event(
+        project_id=project.id,
+        event_type="layout_error",
+        url=f"https://{domain}/pricing",
+        session_id=sess_id,
+        properties={
+            "type": "horizontal_overflow",
+            "scroll_width": 430,
+            "viewport_width": 390
+        },
+        created_at=datetime.utcnow() - timedelta(minutes=9)
+    )
+
+    # 3. Rage click
+    rage_event = models.Event(
+        project_id=project.id,
+        event_type="rage_click",
+        url=f"https://{domain}/booking",
+        session_id=sess_id,
+        properties={
+            "tag": "button",
+            "text": "Complete Reservation",
+            "clicks": 4
+        },
+        created_at=datetime.utcnow() - timedelta(minutes=5)
+    )
+
+    # 4. Slow APM trace
+    slow_trace = models.APMTrace(
+        project_id=project.id,
+        service_name="web-backend",
+        endpoint="/api/v1/checkout/process",
+        method="POST",
+        duration_ms=1140,
+        status_code=200,
+        created_at=datetime.utcnow() - timedelta(minutes=3)
+    )
+
+    db.add(err_event)
+    db.add(layout_event)
+    db.add(rage_event)
+    db.add(slow_trace)
+    db.commit()
+
+    return {"status": "simulated", "domain": domain, "events_created": 4}
 
 # --- PROJECTS ---
 class ProjectCreate(BaseModel):

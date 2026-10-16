@@ -12,3 +12,8 @@ __pycache__/
 
 # DB
 *.db
+
+# Test recordings
+**/storage/recordings/sess_*
+**/storage/recordings/sim_*
+

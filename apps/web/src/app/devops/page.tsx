@@ -51,6 +51,8 @@ export default function DevOpsAPMPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [copiedSDK, setCopiedSDK] = useState<'node' | 'python' | null>(null);
+  const [apiKey, setApiKey] = useState('');
+  const [clientDomain, setClientDomain] = useState('');
   const [metrics, setMetrics] = useState<APMMetrics>({
     avg_latency_ms: 68,
     p95_latency_ms: 142,
@@ -85,17 +87,31 @@ export default function DevOpsAPMPage() {
 
   useEffect(() => {
     fetchAPMMetrics();
+    const token = localStorage.getItem('te_token');
+    if (token) {
+      fetch(apiUrl('/api/v1/projects/status'), {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then(r => r.json())
+        .then(st => {
+          if (st.api_key) setApiKey(st.api_key);
+          if (st.domain) setClientDomain(st.domain);
+        })
+        .catch(() => {});
+    }
   }, []);
 
   const copyNodeSnippet = () => {
-    const snippet = `// Node.js (Express / Next.js) Middleware\nconst axios = require('axios');\napp.use((req, res, next) => {\n  const start = Date.now();\n  res.on('finish', () => {\n    axios.post('https://thirdeye-1-pq8w.onrender.com/api/v1/apm/report', {\n      api_key: 'te_live_990c733a065d43b3b70bb0c1227d2f3c',\n      endpoint: req.path,\n      method: req.method,\n      status_code: res.statusCode,\n      duration_ms: Date.now() - start\n    }).catch(() => {});\n  });\n  next();\n});`;
+    const key = apiKey || 'your_project_api_key';
+    const snippet = `// Node.js (Express / Next.js) Middleware\nconst axios = require('axios');\napp.use((req, res, next) => {\n  const start = Date.now();\n  res.on('finish', () => {\n    axios.post('https://thirdeye-1-pq8w.onrender.com/api/v1/apm/report', {\n      api_key: '${key}',\n      endpoint: req.path,\n      method: req.method,\n      status_code: res.statusCode,\n      duration_ms: Date.now() - start\n    }).catch(() => {});\n  });\n  next();\n});`;
     navigator.clipboard.writeText(snippet);
     setCopiedSDK('node');
     setTimeout(() => setCopiedSDK(null), 2500);
   };
 
   const copyPythonSnippet = () => {
-    const snippet = `# Python (FastAPI / Starlette) Middleware\nimport time, urllib.request, json\n@app.middleware("http")\nasync def thirdeye_apm(request, call_next):\n    start = time.time()\n    response = await call_next(request)\n    duration = int((time.time() - start) * 1000)\n    # Report trace asynchronously to ThirdEye\n    return response`;
+    const key = apiKey || 'your_project_api_key';
+    const snippet = `# Python (FastAPI / Starlette) Middleware\nimport time, urllib.request, json\n@app.middleware("http")\nasync def thirdeye_apm(request, call_next):\n    start = time.time()\n    response = await call_next(request)\n    duration = int((time.time() - start) * 1000)\n    # Report trace asynchronously to ThirdEye\n    try:\n        payload = json.dumps({\n            "api_key": "${key}",\n            "endpoint": request.url.path,\n            "method": request.method,\n            "status_code": response.status_code,\n            "duration_ms": duration\n        }).encode("utf-8")\n        req = urllib.request.Request("https://thirdeye-1-pq8w.onrender.com/api/v1/apm/report", data=payload, headers={"Content-Type": "application/json"})\n        urllib.request.urlopen(req, timeout=1)\n    except Exception:\n        pass\n    return response`;
     navigator.clipboard.writeText(snippet);
     setCopiedSDK('python');
     setTimeout(() => setCopiedSDK(null), 2500);
