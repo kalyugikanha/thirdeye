@@ -16,7 +16,7 @@ import io
 from dotenv import load_dotenv
 load_dotenv()  # Load .env file so GEMINI_API_KEY is available
 from app.database import engine, Base, get_db
-from app import models, auth, enterprise
+from app import models, auth, enterprise, growth
 from pydantic import BaseModel
 try:
     import email_validator
@@ -112,6 +112,7 @@ for _db_path in [BASE_DIR / "thirdeye.db", ROOT_DIR / "thirdeye.db"]:
 
 app = FastAPI(title='ThirdEye AI Workspace API')
 app.include_router(enterprise.router)
+app.include_router(growth.router)
 
 @app.middleware("http")
 async def cors_middleware(request: Request, call_next):
@@ -2427,7 +2428,7 @@ def get_sla_report(db: Session = Depends(get_db), current_user: models.User = De
 
 # ===================== OBSERVABILITY & ACTIVATION GATEWAY =====================
 @app.get('/api/v1/projects/status')
-def get_project_connection_status(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def get_project_connection_status(project_id: Optional[int] = None, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     projects = get_user_projects(db, current_user)
     if not projects:
         return {
@@ -2441,7 +2442,7 @@ def get_project_connection_status(db: Session = Depends(get_db), current_user: m
             "api_key": None,
             "project_id": None
         }
-    p = projects[0]
+    p = next((proj for proj in projects if proj.id == project_id), projects[0]) if project_id else projects[0]
     event_count = db.query(models.Event).filter(models.Event.project_id == p.id).count()
     rec_count = db.query(models.SessionRecording).filter(models.SessionRecording.project_id == p.id).count()
     apm_count = db.query(models.APMTrace).filter(models.APMTrace.project_id == p.id).count()

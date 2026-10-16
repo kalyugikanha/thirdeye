@@ -435,6 +435,151 @@
   sendHeartbeat();
   setInterval(sendHeartbeat, 15000);
 
+  // 12. Core Web Vitals & Real User Monitoring (RUM)
+  var vitalsState = { lcp: null, inp: null, cls: 0, ttfb: null, sent: false };
+  try {
+    if (window.PerformanceObserver) {
+      try {
+        new PerformanceObserver(function(list) {
+          var entries = list.getEntries();
+          if (entries.length) {
+            var last = entries[entries.length - 1];
+            vitalsState.lcp = Math.round(last.renderTime || last.loadTime || last.startTime || 0);
+          }
+        }).observe({ type: 'largest-contentful-paint', buffered: true });
+      } catch (e) {}
+      try {
+        new PerformanceObserver(function(list) {
+          list.getEntries().forEach(function(entry) {
+            if (!entry.hadRecentInput && typeof entry.value === 'number') {
+              vitalsState.cls += entry.value;
+            }
+          });
+        }).observe({ type: 'layout-shift', buffered: true });
+      } catch (e) {}
+      try {
+        new PerformanceObserver(function(list) {
+          list.getEntries().forEach(function(entry) {
+            var dur = Math.round(entry.duration || (entry.processingStart ? entry.processingStart - entry.startTime : 0));
+            if (dur > (vitalsState.inp || 0)) vitalsState.inp = dur;
+          });
+        }).observe({ type: 'first-input', buffered: true });
+      } catch (e) {}
+    }
+    var nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+    if (nav && nav.responseStart > 0) {
+      vitalsState.ttfb = Math.max(0, Math.round(nav.responseStart - (nav.requestStart || 0)));
+    }
+  } catch (e) {}
+
+  function flushVitals() {
+    if (vitalsState.sent || !apiKey) return;
+    if (vitalsState.lcp === null && vitalsState.ttfb === null) return;
+    vitalsState.sent = true;
+    var deviceType = window.innerWidth < 768 ? 'Mobile' : 'Desktop';
+    fetch(apiHost + '/api/v1/rum/vitals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: apiKey,
+        session_id: sessionId,
+        url: window.location.href,
+        device: deviceType,
+        lcp_ms: vitalsState.lcp,
+        inp_ms: vitalsState.inp || 80,
+        cls_score: Math.round(vitalsState.cls * 1000) / 1000,
+        ttfb_ms: vitalsState.ttfb || 180
+      }),
+      keepalive: true
+    }).catch(function() {});
+  }
+  setTimeout(flushVitals, 4000);
+  window.addEventListener('pagehide', flushVitals);
+
+  // 13. Privacy-Safe Form & Checkout Abandonment Tracking (never reads field values)
+  var activeFormField = null;
+  var touchedForms = {};
+  document.addEventListener('focusin', function(e) {
+    try {
+      var t = e.target;
+      if (!t || !t.tagName) return;
+      if (t.closest && t.closest('#te-feedback-root')) return;
+      var tag = t.tagName.toLowerCase();
+      if (tag !== 'input' && tag !== 'select' && tag !== 'textarea') return;
+      var form = t.form || (t.closest && t.closest('form'));
+      var formId = (form && (form.id || form.getAttribute('name'))) || (window.location.pathname + '#form');
+      var fieldName = t.name || t.id || t.type || tag;
+      activeFormField = { formId: formId, field: fieldName, start: Date.now() };
+      touchedForms[formId] = { submitted: false, lastField: fieldName };
+    } catch (err) {}
+  }, true);
+
+  document.addEventListener('focusout', function() {
+    try {
+      if (!activeFormField) return;
+      var dur = Math.max(0, Date.now() - activeFormField.start);
+      track('form_focus', {
+        form_id: activeFormField.formId,
+        field: activeFormField.field,
+        duration_ms: dur
+      });
+      activeFormField = null;
+    } catch (err) {}
+  }, true);
+
+  document.addEventListener('submit', function(e) {
+    try {
+      var form = e.target;
+      var formId = (form && (form.id || form.getAttribute('name'))) || (window.location.pathname + '#form');
+      if (touchedForms[formId]) touchedForms[formId].submitted = true;
+      track('form_submit', { form_id: formId });
+    } catch (err) {}
+  }, true);
+
+  window.addEventListener('beforeunload', function() {
+    try {
+      Object.keys(touchedForms).forEach(function(fid) {
+        var st = touchedForms[fid];
+        if (st && !st.submitted) {
+          track('form_abandon', { form_id: fid, last_field: st.lastField });
+        }
+      });
+    } catch (err) {}
+  });
+
+  // 14. A/B Testing & Feature Flags Bucketer
+  var assignedVariants = {};
+  function hashBucket(str) {
+    var h = 2166136261;
+    for (var i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return Math.abs(h) % 100;
+  }
+
+  function initExperiments() {
+    if (!apiKey) return;
+    fetch(apiHost + '/api/v1/experiments/active?api_key=' + encodeURIComponent(apiKey))
+      .then(function(r) { return r.ok ? r.json() : []; })
+      .then(function(list) {
+        if (!Array.isArray(list)) return;
+        list.forEach(function(exp) {
+          var b = hashBucket(sessionId + ':' + exp.key);
+          var variant = b < (exp.traffic_split || 50) ? 'B' : 'A';
+          assignedVariants[exp.key] = variant;
+          if (exp.selector) {
+            var node = document.querySelector(exp.selector);
+            if (node && variant === 'B' && exp.variant_text) {
+              node.textContent = exp.variant_text;
+            }
+          }
+          track('experiment_exposure', { experiment_key: exp.key, variant: variant });
+        });
+      }).catch(function() {});
+  }
+  initExperiments();
+
   // Initiate session recording
   loadAndStartRecording();
 
@@ -444,6 +589,7 @@
   window.ThirdEye = {
     track: track,
     getSessionId: function() { return sessionId; },
+    getVariant: function(key) { return assignedVariants[key] || 'A'; },
     flush: flushRecordings
   };
 })();

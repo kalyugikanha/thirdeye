@@ -250,3 +250,36 @@ class IncidentLog(Base):
     status = Column(String, default='delivered')  # 'delivered', 'failed', 'suppressed'
     response_code = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Experiment(Base):
+    __tablename__ = 'experiments'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    key = Column(String, index=True)          # e.g., 'pricing_hero_cta'
+    name = Column(String)
+    status = Column(String, default='running')  # 'running', 'paused'
+    target_url = Column(String, default='*')
+    selector = Column(String, nullable=True)   # optional CSS selector for DOM text test
+    control_text = Column(String, nullable=True)
+    variant_text = Column(String, nullable=True)
+    goal_target = Column(String, default='/thank-you')  # URL or event that counts as conversion
+    traffic_split = Column(Integer, default=50)  # % routed to Variant B
+    created_at = Column(DateTime, default=datetime.utcnow)
+    project = relationship('Project')
+
+
+class WebVital(Base):
+    __tablename__ = 'web_vitals'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    session_id = Column(String, index=True)
+    url = Column(String, index=True)
+    device = Column(String, default='Desktop')
+    lcp_ms = Column(Integer, nullable=True)
+    fid_ms = Column(Integer, nullable=True)
+    inp_ms = Column(Integer, nullable=True)
+    cls_score = Column(String, nullable=True)  # stored as float string e.g. "0.04"
+    ttfb_ms = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    project = relationship('Project')

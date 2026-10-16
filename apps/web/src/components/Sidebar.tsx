@@ -31,7 +31,12 @@ import {
   FileText,
   CreditCard,
   Target,
-  Smile
+  Smile,
+  ClipboardList,
+  FlaskConical,
+  Gauge,
+  Plus,
+  ChevronDown
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiUrl, API_BASE } from '@/lib/api';
@@ -59,12 +64,15 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/analytics/errors', icon: AlertTriangle, title: 'Errors & Issues', badge: 'BugTracker' },
       { href: '/analytics/journeys', icon: GitMerge, title: 'User Journey Flows', badge: 'Flow' },
       { href: '/analytics/goals', icon: Target, title: 'Conversion Goals', badge: 'ROI' },
+      { href: '/analytics/forms', icon: ClipboardList, title: 'Form Analytics', badge: 'CRO' },
+      { href: '/analytics/experiments', icon: FlaskConical, title: 'A/B Experiments', badge: 'Split' },
       { href: '/analytics/feedback', icon: Smile, title: 'Customer Feedback', badge: 'CSAT' },
     ]
   },
   {
     label: "Health & APM",
     items: [
+      { href: '/performance', icon: Gauge, title: 'Core Web Vitals', badge: 'CWV' },
       { href: '/devops', icon: Cpu, title: 'Server APM & APIs' },
       { href: '/uptime', icon: Activity, title: 'Uptime & SSL' },
       { href: '/seo', icon: Search, title: 'SEO & Performance' },
@@ -94,20 +102,80 @@ export default function Sidebar() {
   const [copiedSnippet, setCopiedSnippet] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [simulating, setSimulating] = useState(false);
+  const [projects, setProjects] = useState<any[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<number | null>(null);
+  const [showProjectMenu, setShowProjectMenu] = useState(false);
+  const [showAddDomainModal, setShowAddDomainModal] = useState(false);
+  const [newDomain, setNewDomain] = useState('');
+  const [addingDomain, setAddingDomain] = useState(false);
+  const [domainError, setDomainError] = useState('');
 
-  const fetchStatus = () => {
+  const fetchStatus = (overridePid?: number) => {
     const token = localStorage.getItem('te_token');
     if (token) {
-      fetch(apiUrl('/api/v1/projects/status'), {
+      const storedPid = overridePid || Number(localStorage.getItem('te_active_project_id') || 0);
+      const q = storedPid ? `?project_id=${storedPid}` : '';
+      fetch(apiUrl(`/api/v1/projects/status${q}`), {
         headers: { Authorization: `Bearer ${token}` }
       })
         .then((res) => res.json())
         .then((data) => {
           if (data.domain) setDomain(data.domain);
           if (data.api_key) setApiKey(data.api_key);
+          if (data.project_id) setActiveProjectId(data.project_id);
           setIsConnected(Boolean(data.is_connected));
         })
         .catch(() => {});
+
+      fetch(apiUrl('/api/v1/projects'), {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then((res) => (res.ok ? res.json() : []))
+        .then((list) => {
+          if (Array.isArray(list)) setProjects(list);
+        })
+        .catch(() => {});
+    }
+  };
+
+  const handleSelectProject = (proj: any) => {
+    localStorage.setItem('te_active_project_id', String(proj.id));
+    setActiveProjectId(proj.id);
+    setDomain(proj.domain);
+    setApiKey(proj.api_key);
+    setIsConnected(Boolean(proj.is_connected));
+    setShowProjectMenu(false);
+    window.location.reload();
+  };
+
+  const handleCreateDomain = async () => {
+    setDomainError('');
+    if (!newDomain.trim() || !newDomain.includes('.')) {
+      setDomainError('Enter a valid domain (e.g. app.company.com)');
+      return;
+    }
+    setAddingDomain(true);
+    const token = localStorage.getItem('te_token');
+    try {
+      const res = await fetch(apiUrl('/api/v1/projects'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ domain: newDomain.trim() })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDomainError(data.detail || 'Could not add domain');
+        return;
+      }
+      localStorage.setItem('te_active_project_id', String(data.id));
+      setNewDomain('');
+      setShowAddDomainModal(false);
+      fetchStatus(data.id);
+      setShowActivationModal(true);
+    } catch (e) {
+      setDomainError('Failed to create domain');
+    } finally {
+      setAddingDomain(false);
     }
   };
 
@@ -205,28 +273,70 @@ export default function Sidebar() {
             </div>
           </Link>
 
-          {/* Active Domain Card */}
-          <div className="p-3 rounded-2xl bg-white shadow-sm border border-slate-200/60 flex items-center justify-between">
-            <div className="flex items-center gap-2 overflow-hidden">
-              <Globe2 className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-              <span className="text-xs font-semibold text-slate-700 truncate" title={domain || 'Workspace'}>
-                {domain || 'Workspace'}
-              </span>
-            </div>
-            {isConnected ? (
-              <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 flex-shrink-0">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                Active
-              </span>
-            ) : (
-              <button 
-                onClick={() => setShowActivationModal(true)}
-                className="flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 px-2 py-0.5 rounded-full border border-amber-200 transition-colors flex-shrink-0 cursor-pointer"
-                title="Click to Activate"
+          {/* Active Domain & Multi-Project Switcher */}
+          <div className="relative">
+            <div className="p-3 rounded-2xl bg-white shadow-sm border border-slate-200/60 flex items-center justify-between gap-2">
+              <button
+                onClick={() => setShowProjectMenu(!showProjectMenu)}
+                className="flex items-center gap-2 overflow-hidden flex-1 text-left"
+                title="Switch or add domain"
               >
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-                Pending
+                <Globe2 className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                <span className="text-xs font-semibold text-slate-700 truncate">
+                  {domain || 'Workspace'}
+                </span>
+                <ChevronDown className="w-3 h-3 text-slate-400 flex-shrink-0" />
               </button>
+              {isConnected ? (
+                <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 flex-shrink-0">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Active
+                </span>
+              ) : (
+                <button 
+                  onClick={() => setShowActivationModal(true)}
+                  className="flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 px-2 py-0.5 rounded-full border border-amber-200 transition-colors flex-shrink-0 cursor-pointer"
+                  title="Click to Activate"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                  Pending
+                </button>
+              )}
+            </div>
+
+            {showProjectMenu && (
+              <div className="absolute left-0 right-0 mt-1.5 z-40 bg-white border border-slate-200 rounded-2xl shadow-xl p-1.5 space-y-1">
+                <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  Organization Domains ({projects.length || 1})
+                </div>
+                {projects.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => handleSelectProject(p)}
+                    className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs transition-colors ${
+                      p.id === activeProjectId || p.domain === domain
+                        ? 'bg-slate-900 text-white font-bold'
+                        : 'text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span className="truncate">{p.domain}</span>
+                    {p.is_connected ? (
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0" />
+                    ) : (
+                      <span className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" />
+                    )}
+                  </button>
+                ))}
+                <button
+                  onClick={() => {
+                    setShowProjectMenu(false);
+                    setShowAddDomainModal(true);
+                  }}
+                  className="w-full flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 border-t border-slate-100 mt-1"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add Another Domain
+                </button>
+              </div>
             )}
           </div>
 
@@ -403,6 +513,48 @@ export default function Sidebar() {
                     <span>Simulate Test Session</span>
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAddDomainModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl border border-slate-100 space-y-4 relative">
+            <button
+              onClick={() => setShowAddDomainModal(false)}
+              className="absolute top-5 right-5 p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <h3 className="text-lg font-extrabold text-slate-900">Add New Domain</h3>
+            <p className="text-xs text-slate-500">
+              Register an additional website or subdomain under your organization workspace.
+            </p>
+            <label className="block text-xs font-semibold text-slate-700">
+              Website Domain
+              <input
+                value={newDomain}
+                onChange={(e) => setNewDomain(e.target.value)}
+                placeholder="app.yourdomain.com"
+                className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono"
+              />
+            </label>
+            {domainError && <p className="text-xs text-rose-600">{domainError}</p>}
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowAddDomainModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 text-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateDomain}
+                disabled={addingDomain}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                {addingDomain && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Add Domain
               </button>
             </div>
           </div>
