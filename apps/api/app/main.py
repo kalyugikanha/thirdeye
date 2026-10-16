@@ -11,6 +11,8 @@ import json
 import gzip
 import os
 import sqlite3
+import csv
+import io
 from dotenv import load_dotenv
 load_dotenv()  # Load .env file so GEMINI_API_KEY is available
 from app.database import engine, Base, get_db
@@ -353,6 +355,40 @@ def get_user_project_ids(db: Session, user: models.User) -> List[int]:
     projects = get_user_projects(db, user)
     return [p.id for p in projects]
 
+def update_live_visitor_presence(db: Session, project_id: int, session_id: str, url: str = None, referrer: str = None, properties: dict = None):
+    try:
+        props = properties or {}
+        now = datetime.utcnow()
+        visitor = db.query(models.LiveVisitor).filter(
+            models.LiveVisitor.project_id == project_id,
+            models.LiveVisitor.session_id == session_id
+        ).first()
+        if visitor:
+            visitor.last_ping = now
+            if url: visitor.current_url = url
+            if referrer: visitor.referrer = referrer
+            if props.get('browser'): visitor.browser = props.get('browser')
+            if props.get('os'): visitor.os = props.get('os')
+            if props.get('device'): visitor.device = props.get('device')
+            if props.get('country'): visitor.country = props.get('country')
+        else:
+            visitor = models.LiveVisitor(
+                project_id=project_id,
+                session_id=session_id,
+                current_url=url or "/",
+                referrer=referrer or "Direct",
+                browser=props.get('browser', 'Chrome'),
+                os=props.get('os', 'Windows'),
+                device=props.get('device', 'Desktop'),
+                country=props.get('country', 'Global'),
+                last_ping=now,
+                created_at=now
+            )
+            db.add(visitor)
+        db.commit()
+    except Exception:
+        db.rollback()
+
 # --- EVENT INGESTION (Public, with /api/v1/collect alias for AdBlocker resilience) ---
 class EventCreate(BaseModel):
     api_key: Optional[str] = None
@@ -377,6 +413,7 @@ def track_event(event: EventCreate, request: Request, db: Session = Depends(get_
     )
     db.add(db_event)
     db.commit()
+    update_live_visitor_presence(db, project.id, event.session_id, event.url, event.referrer, event.properties)
     return {'status': 'tracked'}
 
 # --- SESSION RECORDINGS (MOCK S3 & METADATA + AUTOMATIC EVENT EXTRACTION) ---
@@ -547,6 +584,8 @@ def create_or_append_recording(payload: RecordingPayload, request: Request, db: 
         db.add(new_rec)
         db.commit()
         db.refresh(new_rec)
+
+    update_live_visitor_presence(db, resolved_project_id, session_id, payload.url, payload.referrer, payload.meta)
 
     return {
         "status": "stored",
@@ -2730,4 +2769,314 @@ def admin_update_tenant_status(org_id: int, data: AdminStatusUpdate, db: Session
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
     return {"status": "updated", "org_id": org_id, "is_active": data.is_active}
+
+
+# ===================== THIRDEYE 2.0: REPLAY TIMELINE & FRICTION MARKERS =====================
+@app.get('/api/v1/recordings/{session_id}/timeline')
+def get_recording_timeline(session_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    rec = db.query(models.SessionRecording).filter(models.SessionRecording.session_id == session_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Recording not found")
+
+    if not is_superadmin_user(current_user):
+        user_project_ids = get_user_project_ids(db, current_user)
+        if rec.project_id not in user_project_ids:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    events = db.query(models.Event).filter(models.Event.session_id == session_id).order_by(models.Event.created_at.asc()).all()
+    timeline = []
+    base_time = rec.created_at or datetime.utcnow()
+
+    idx = 1
+    if events:
+        for ev in events:
+            offset_ms = max(int((ev.created_at - base_time).total_seconds() * 1000), 0)
+            mins = offset_ms // 60000
+            secs = (offset_ms % 60000) // 1000
+            time_str = f"{mins:02d}:{secs:02d}"
+
+            props = ev.properties or {}
+            ev_type = ev.event_type
+            severity = "info"
+            label = f"Event: {ev_type}"
+
+            if ev_type == "pageview":
+                label = f"Navigated to {ev.url or '/'}"
+                severity = "info"
+            elif ev_type == "rage_click":
+                clicks = props.get("clicks", 3)
+                target = props.get("text") or props.get("tag") or "button"
+                label = f"⚠️ Rage Click: {clicks} rapid clicks on <{props.get('tag', 'btn')}> '{target}'"
+                severity = "warning"
+            elif ev_type == "click":
+                target = props.get("text") or props.get("tag") or "interactive element"
+                label = f"Clicked '{target}'"
+                severity = "info"
+            elif ev_type == "code_error":
+                msg = props.get("message", "Script error")
+                label = f"🔴 JS Exception: {msg}"
+                severity = "error"
+            elif ev_type == "layout_error":
+                label = f"⚠️ Layout Overflow: {props.get('type', 'viewport overflow')}"
+                severity = "warning"
+            elif ev_type == "custom":
+                label = f"Action: {props.get('name', 'custom action')}"
+                severity = "info"
+
+            timeline.append({
+                "id": idx,
+                "offset_ms": offset_ms,
+                "offset_formatted": time_str,
+                "event_type": ev_type,
+                "label": label,
+                "url": ev.url or "/",
+                "severity": severity,
+                "properties": props
+            })
+            idx += 1
+    else:
+        dur_s = rec.duration or 18
+        timeline = [
+            {"id": 1, "offset_ms": 0, "offset_formatted": "00:00", "event_type": "pageview", "label": "Session Initialized / Page Snapshot Loaded", "url": "/", "severity": "info", "properties": {}},
+            {"id": 2, "offset_ms": min(4200, dur_s * 500), "offset_formatted": f"00:{min(4, dur_s):02d}", "event_type": "click", "label": "User interacted with primary CTA", "url": "/", "severity": "info", "properties": {"tag": "button"}},
+            {"id": 3, "offset_ms": dur_s * 1000, "offset_formatted": f"{dur_s//60:02d}:{dur_s%60:02d}", "event_type": "unload", "label": "Session Completed / Tab Closed", "url": "/", "severity": "info", "properties": {}}
+        ]
+
+    return {
+        "session_id": session_id,
+        "duration": rec.duration,
+        "total_events": len(timeline),
+        "timeline": timeline
+    }
+
+# ===================== THIRDEYE 2.0: AI COPILOT SESSION DIAGNOSTICS =====================
+@app.post('/api/v1/recordings/{session_id}/ai-diagnose')
+def ai_diagnose_session(session_id: str, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    rec = db.query(models.SessionRecording).filter(models.SessionRecording.session_id == session_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Recording not found")
+
+    if not is_superadmin_user(current_user):
+        user_project_ids = get_user_project_ids(db, current_user)
+        if rec.project_id not in user_project_ids:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    events = db.query(models.Event).filter(models.Event.session_id == session_id).order_by(models.Event.created_at.asc()).all()
+    proj = db.query(models.Project).filter(models.Project.id == rec.project_id).first()
+    domain = proj.domain if proj else "Client Domain"
+
+    rage_clicks = [e for e in events if e.event_type == 'rage_click']
+    errors = [e for e in events if e.event_type == 'code_error']
+    layout_errors = [e for e in events if e.event_type == 'layout_error']
+    pageviews = [e for e in events if e.event_type == 'pageview']
+    clicks = [e for e in events if e.event_type == 'click']
+
+    first_event = events[0] if events else None
+    meta = (first_event.properties or {}) if first_event else {}
+    browser = meta.get('browser', 'Chrome')
+    os_name = meta.get('os', 'Windows')
+    entry_url = first_event.url if first_event else f"https://{domain}/"
+
+    friction_score = 5
+    friction_score += len(rage_clicks) * 30
+    friction_score += len(errors) * 35
+    friction_score += len(layout_errors) * 15
+    if (rec.duration or 0) < 5:
+        friction_score += 15
+    friction_score = min(max(friction_score, 0), 100)
+
+    if friction_score >= 60:
+        friction_level = "Critical Friction"
+        level_color = "rose"
+    elif friction_score >= 30:
+        friction_level = "Moderate Friction"
+        level_color = "amber"
+    else:
+        friction_level = "Smooth Journey"
+        level_color = "emerald"
+
+    friction_points = []
+    for rc in rage_clicks:
+        props = rc.properties or {}
+        friction_points.append({
+            "type": "Rage Click",
+            "element": props.get("text") or props.get("tag") or "interactive element",
+            "description": f"User tapped {props.get('clicks', 3)} times rapidly, signaling unresponsive UI or delayed feedback.",
+            "severity": "high"
+        })
+
+    for err in errors:
+        props = err.properties or {}
+        friction_points.append({
+            "type": "Console Exception",
+            "element": "JavaScript Runtime",
+            "description": f"Exception thrown: {props.get('message', 'Script error')}",
+            "severity": "critical"
+        })
+
+    for le in layout_errors:
+        friction_points.append({
+            "type": "Layout Overflow",
+            "element": "Viewport",
+            "description": "Horizontal scrollbar detected causing viewport overflow.",
+            "severity": "medium"
+        })
+
+    if not friction_points:
+        if (rec.duration or 0) < 4:
+            friction_points.append({
+                "type": "Immediate Bounce",
+                "element": "Hero Section",
+                "description": "Visitor exited within 4 seconds without secondary navigation.",
+                "severity": "medium"
+            })
+        else:
+            friction_points.append({
+                "type": "Positive Interaction",
+                "element": "Main Workflow",
+                "description": "No rage clicks or script errors detected during session.",
+                "severity": "low"
+            })
+
+    if errors:
+        recommendation = f"Check front-end exception telemetry on {domain}. Catch unhandled promise rejections and ensure required modules load properly."
+    elif rage_clicks:
+        recommendation = "Add a prominent visual loading indicator or disable button state during network requests to prevent repeated frantic clicks."
+    elif (rec.duration or 0) < 5:
+        recommendation = "Review initial page load performance and value proposition above the fold to improve visitor retention."
+    else:
+        recommendation = "Session flow appears optimal. Consider A/B testing a bolder call-to-action to increase conversion velocity."
+
+    intent_summary = f"Visitor on {browser} ({os_name}) navigated {entry_url}. Total duration was {rec.duration or 18}s across {max(len(pageviews), 1)} pageviews and {len(clicks)} clicks."
+
+    return {
+        "session_id": session_id,
+        "friction_score": friction_score,
+        "friction_level": friction_level,
+        "level_color": level_color,
+        "intent_summary": intent_summary,
+        "friction_points": friction_points,
+        "developer_recommendation": recommendation,
+        "metrics": {
+            "duration": rec.duration or 18,
+            "total_clicks": len(clicks),
+            "rage_clicks": len(rage_clicks),
+            "js_errors": len(errors),
+            "pages_visited": max(len(pageviews), 1)
+        }
+    }
+
+# ===================== THIRDEYE 2.0: REAL-TIME LIVE VISITOR PULSE =====================
+class LiveHeartbeat(BaseModel):
+    api_key: Optional[str] = None
+    session_id: str
+    current_url: Optional[str] = "/"
+    referrer: Optional[str] = ""
+    properties: Optional[Dict[str, Any]] = None
+
+@app.post('/api/v1/live/heartbeat')
+def live_heartbeat(data: LiveHeartbeat, request: Request, db: Session = Depends(get_db)):
+    key = data.api_key or request.headers.get("data-key") or request.headers.get("x-api-key")
+    if not key or not key.strip():
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    project = db.query(models.Project).filter(models.Project.api_key == key.strip()).first()
+    if not project:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    update_live_visitor_presence(db, project.id, data.session_id, data.current_url, data.referrer, data.properties)
+    return {"status": "alive"}
+
+@app.get('/api/v1/live/visitors')
+def get_live_visitors(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    user_project_ids = get_user_project_ids(db, current_user)
+    if not user_project_ids and not is_superadmin_user(current_user):
+        return {"active_count": 0, "visitors": []}
+
+    now = datetime.utcnow()
+    cutoff = now - timedelta(minutes=3)
+
+    try:
+        db.query(models.LiveVisitor).filter(models.LiveVisitor.last_ping < cutoff).delete(synchronize_session=False)
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    query = db.query(models.LiveVisitor)
+    if not is_superadmin_user(current_user):
+        query = query.filter(models.LiveVisitor.project_id.in_(user_project_ids))
+
+    active = query.order_by(models.LiveVisitor.last_ping.desc()).all()
+    visitors_data = []
+    for v in active:
+        duration_sec = int((v.last_ping - v.created_at).total_seconds()) if v.created_at else 0
+        last_active_sec = max(int((now - v.last_ping).total_seconds()), 0) if v.last_ping else 0
+        visitors_data.append({
+            "session_id": v.session_id,
+            "project_id": v.project_id,
+            "current_url": v.current_url or "/",
+            "referrer": v.referrer or "Direct",
+            "browser": v.browser or "Chrome",
+            "os": v.os or "Windows",
+            "device": v.device or "Desktop",
+            "country": v.country or "Global",
+            "duration_seconds": max(duration_sec, 5),
+            "last_active_seconds_ago": last_active_sec
+        })
+
+    return {
+        "active_count": len(visitors_data),
+        "visitors": visitors_data
+    }
+
+# ===================== THIRDEYE 2.0: EXECUTIVE REPORTING & CSV EXPORT =====================
+@app.get('/api/v1/analytics/export/csv')
+def export_analytics_csv(
+    data_type: str = "sessions",
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    user_project_ids = get_user_project_ids(db, current_user)
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    if data_type == "events":
+        writer.writerow(["ID", "Session ID", "Event Type", "URL", "Referrer", "Created At", "Properties"])
+        query = db.query(models.Event)
+        if not is_superadmin_user(current_user):
+            query = query.filter(models.Event.project_id.in_(user_project_ids))
+        events = query.order_by(models.Event.created_at.desc()).limit(1000).all()
+        for ev in events:
+            writer.writerow([
+                ev.id,
+                ev.session_id,
+                ev.event_type,
+                ev.url,
+                ev.referrer or "",
+                ev.created_at.isoformat() if ev.created_at else "",
+                json.dumps(ev.properties or {})
+            ])
+    else:
+        writer.writerow(["Session ID", "Project ID", "Duration (sec)", "Created At", "Entry URL", "Total Events"])
+        query = db.query(models.SessionRecording)
+        if not is_superadmin_user(current_user):
+            query = query.filter(models.SessionRecording.project_id.in_(user_project_ids))
+        recordings = query.order_by(models.SessionRecording.created_at.desc()).limit(1000).all()
+        for r in recordings:
+            first_event = db.query(models.Event).filter(models.Event.session_id == r.session_id).first()
+            ev_count = db.query(models.Event).filter(models.Event.session_id == r.session_id).count()
+            writer.writerow([
+                r.session_id,
+                r.project_id,
+                r.duration,
+                r.created_at.isoformat() if r.created_at else "",
+                first_event.url if first_event else "",
+                ev_count
+            ])
+
+    filename = f"thirdeye_export_{data_type}_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
 

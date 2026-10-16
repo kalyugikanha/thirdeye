@@ -177,3 +177,22 @@ class StorageConfig(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship('Project', back_populates='storage_config')
+
+
+class LiveVisitor(Base):
+    __tablename__ = 'live_visitors'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    session_id = Column(String, index=True)
+    current_url = Column(String)
+    referrer = Column(String, nullable=True)
+    browser = Column(String, default='Chrome')
+    os = Column(String, default='Windows')
+    device = Column(String, default='Desktop')
+    country = Column(String, default='Global')
+    city = Column(String, nullable=True)
+    ip_hash = Column(String, nullable=True)
+    last_ping = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship('Project')

@@ -279,6 +279,26 @@
     } catch (e) {}
   });
 
+  // 11. Real-Time Presence Heartbeat (every 15s when active tab)
+  function sendHeartbeat() {
+    if (document.visibilityState === 'hidden') return;
+    try {
+      fetch(apiHost + '/api/v1/live/heartbeat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          api_key: apiKey,
+          session_id: sessionId,
+          current_url: window.location.href,
+          referrer: document.referrer || '',
+          properties: getClientMeta()
+        })
+      }).catch(function() {});
+    } catch (e) {}
+  }
+  sendHeartbeat();
+  setInterval(sendHeartbeat, 15000);
+
   // Initiate session recording
   loadAndStartRecording();
 

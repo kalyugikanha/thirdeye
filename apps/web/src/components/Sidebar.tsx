@@ -26,7 +26,9 @@ import {
   Check,
   RefreshCw,
   X,
-  Loader2
+  Loader2,
+  Radio,
+  FileText
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiUrl, API_BASE } from '@/lib/api';
@@ -47,8 +49,9 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Observability",
     items: [
       { href: '/', icon: LayoutDashboard, title: 'Workspace Home' },
+      { href: '/live', icon: Radio, title: 'Live Pulse Radar', badge: 'Live' },
       { href: '/analytics', icon: BarChart3, title: 'Traffic Analytics', lockedUnlessConnected: true },
-      { href: '/analytics/sessions', icon: Video, title: 'Session Replays', badge: 'Live', lockedUnlessConnected: true },
+      { href: '/analytics/sessions', icon: Video, title: 'Session Replays', badge: 'Replay', lockedUnlessConnected: true },
       { href: '/analytics/heatmaps', icon: Flame, title: 'Click Heatmaps', lockedUnlessConnected: true },
       { href: '/analytics/errors', icon: AlertTriangle, title: 'Errors & Issues', badge: 'BugTracker' },
     ]
@@ -62,8 +65,9 @@ const NAV_GROUPS: NavGroup[] = [
     ]
   },
   {
-    label: "Storage & Ecosystem",
+    label: "Intelligence & Reports",
     items: [
+      { href: '/reports', icon: FileText, title: 'Executive Reports', badge: 'Export' },
       { href: '/settings/storage', icon: HardDrive, title: 'BYOS Storage Hub', badge: 'Client' },
       { href: '/marketing', icon: Share2, title: 'Marketing & Ads' },
       { href: '/alerts', icon: Bell, title: 'System Alerts' },

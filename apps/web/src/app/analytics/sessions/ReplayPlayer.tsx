@@ -8,9 +8,10 @@ interface ReplayPlayerProps {
   events: any[];
   width?: number;
   height?: number;
+  seekTime?: number | null;
 }
 
-export default function ReplayPlayer({ events, width = 850, height = 480 }: ReplayPlayerProps) {
+export default function ReplayPlayer({ events, width = 850, height = 480, seekTime }: ReplayPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerInstanceRef = useRef<any>(null);
 
@@ -53,6 +54,17 @@ export default function ReplayPlayer({ events, width = 850, height = 480 }: Repl
       console.error('Failed to initialize rrweb-player:', err);
     }
   }, [events, width, height]);
+
+  useEffect(() => {
+    if (playerInstanceRef.current && typeof seekTime === 'number') {
+      try {
+        playerInstanceRef.current.goto(seekTime);
+        playerInstanceRef.current.play();
+      } catch (e) {
+        console.warn('Could not seek rrweb player:', e);
+      }
+    }
+  }, [seekTime]);
 
   if (!events || events.length === 0) {
     return (

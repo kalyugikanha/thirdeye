@@ -22,7 +22,12 @@ import {
   Globe,
   ShieldCheck,
   CheckCircle2,
-  Sparkles
+  Sparkles,
+  ListOrdered,
+  Zap,
+  Copy,
+  Check,
+  MousePointer
 } from 'lucide-react';
 
 // Dynamic import ensures rrweb-player only loads client-side
@@ -66,6 +71,15 @@ export default function SessionsPage() {
   const [replayError, setReplayError] = useState<string | null>(null);
   const [simulating, setSimulating] = useState(false);
   const [clientDomain, setClientDomain] = useState<string>('');
+
+  // Timeline and AI diagnostics state
+  const [timeline, setTimeline] = useState<any[] | null>(null);
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
+  const [seekTime, setSeekTime] = useState<number | null>(null);
+  const [aiTab, setAiTab] = useState<'timeline' | 'ai'>('timeline');
+  const [aiDiagnostic, setAiDiagnostic] = useState<any | null>(null);
+  const [loadingAi, setLoadingAi] = useState(false);
+  const [copiedFix, setCopiedFix] = useState(false);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -184,11 +198,52 @@ export default function SessionsPage() {
       }
 
       setReplayEvents(events);
+
+      // Fetch synchronized timeline markers
+      setLoadingTimeline(true);
+      fetch(apiUrl(`/api/v1/recordings/${session.session_id}/timeline`), { headers })
+        .then(r => r.json())
+        .then(data => {
+          if (data && Array.isArray(data.timeline)) {
+            setTimeline(data.timeline);
+          }
+        })
+        .catch(() => {})
+        .finally(() => setLoadingTimeline(false));
     } catch (err: any) {
       console.error('Failed to load replay events:', err);
       setReplayError(err.message || 'Unable to decompress or parse session replay.');
     } finally {
       setLoadingReplay(false);
+    }
+  };
+
+  const handleRunAiDiagnostics = async (sessionId: string) => {
+    setLoadingAi(true);
+    setAiTab('ai');
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('te_token') : null;
+      const res = await fetch(apiUrl(`/api/v1/recordings/${sessionId}/ai-diagnose`), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAiDiagnostic(data);
+      }
+    } catch (err) {
+      console.error('Failed to run AI diagnostics:', err);
+    } finally {
+      setLoadingAi(false);
+    }
+  };
+
+  const handleTimelineClick = (item: any) => {
+    if (typeof item.offset_ms === 'number') {
+      setSeekTime(item.offset_ms);
     }
   };
 
@@ -234,6 +289,11 @@ export default function SessionsPage() {
     setActiveSession(null);
     setReplayEvents(null);
     setReplayError(null);
+    setTimeline(null);
+    setSeekTime(null);
+    setAiDiagnostic(null);
+    setAiTab('timeline');
+    setCopiedFix(false);
   };
 
   return (
@@ -437,7 +497,7 @@ export default function SessionsPage() {
             if (e.target === e.currentTarget) closeModal();
           }}
         >
-          <div className="bg-[#0b101b] border border-slate-800/80 rounded-[32px] p-6 w-full max-w-5xl shadow-[0_25px_70px_rgba(0,0,0,0.6)] relative flex flex-col max-h-[92vh]">
+          <div className="bg-[#0b101b] border border-slate-800/80 rounded-[32px] p-6 w-full max-w-6xl shadow-[0_25px_70px_rgba(0,0,0,0.6)] relative flex flex-col max-h-[94vh]">
             
             {/* Modal Header */}
             <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
@@ -465,41 +525,223 @@ export default function SessionsPage() {
                   </p>
                 </div>
               </div>
-              <button
-                onClick={closeModal}
-                className="w-9 h-9 rounded-2xl bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors"
-                title="Close replay"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setAiTab('ai');
+                    if (activeSession) handleRunAiDiagnostics(activeSession.session_id);
+                  }}
+                  className="hidden sm:flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-rose-500 to-amber-500 hover:opacity-90 text-white text-xs font-bold shadow-md transition-all"
+                  title="Run automated AI friction diagnosis"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+                  <span>Analyze with AI</span>
+                </button>
+                <button
+                  onClick={closeModal}
+                  className="w-9 h-9 rounded-2xl bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors"
+                  title="Close replay"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
-            {/* Modal Player Viewport */}
-            <div className="flex-1 flex items-center justify-center min-h-[480px]">
-              {loadingReplay ? (
-                <div className="flex flex-col items-center justify-center text-slate-400 py-16">
-                  <Loader2 className="w-9 h-9 animate-spin mb-3 text-rose-500" />
-                  <p className="text-sm font-bold text-slate-200">Reconstructing DOM & CSS mutations...</p>
-                  <span className="text-xs text-slate-500 mt-1">Decompressing full snapshot payload</span>
-                </div>
-              ) : replayError ? (
-                <div className="text-center p-8 bg-slate-900/60 rounded-3xl border border-slate-800">
-                  <AlertCircle className="w-9 h-9 text-rose-500 mx-auto mb-2" />
-                  <p className="text-sm font-medium text-slate-200">{replayError}</p>
+            {/* Modal Content: Dual Pane Player & Timeline / AI Diagnostics */}
+            <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-5 min-h-[490px] overflow-hidden">
+              {/* Left Pane: Replay Player */}
+              <div className="lg:col-span-8 flex flex-col justify-center items-center bg-slate-950/70 rounded-2xl border border-slate-850 p-2 overflow-hidden relative">
+                {loadingReplay ? (
+                  <div className="flex flex-col items-center justify-center text-slate-400 py-16">
+                    <Loader2 className="w-9 h-9 animate-spin mb-3 text-rose-500" />
+                    <p className="text-sm font-bold text-slate-200">Reconstructing DOM & CSS mutations...</p>
+                    <span className="text-xs text-slate-500 mt-1">Decompressing full snapshot payload</span>
+                  </div>
+                ) : replayError ? (
+                  <div className="text-center p-8 bg-slate-900/60 rounded-3xl border border-slate-800">
+                    <AlertCircle className="w-9 h-9 text-rose-500 mx-auto mb-2" />
+                    <p className="text-sm font-medium text-slate-200">{replayError}</p>
+                    <button
+                      onClick={() => handleWatchReplay(activeSession)}
+                      className="mt-4 text-xs font-bold bg-slate-800 text-white px-5 py-2.5 rounded-2xl hover:bg-slate-700"
+                    >
+                      Retry Playback
+                    </button>
+                  </div>
+                ) : replayEvents ? (
+                  <ReplayPlayer events={replayEvents} width={680} height={450} seekTime={seekTime} />
+                ) : null}
+              </div>
+
+              {/* Right Pane: Synchronized Timeline & AI Copilot */}
+              <div className="lg:col-span-4 flex flex-col bg-slate-900/50 rounded-2xl border border-slate-800/80 p-4 h-[490px] overflow-hidden">
+                {/* Tab switcher */}
+                <div className="flex items-center gap-1.5 p-1 bg-slate-950/80 rounded-xl mb-3 border border-slate-800/60 flex-shrink-0">
                   <button
-                    onClick={() => handleWatchReplay(activeSession)}
-                    className="mt-4 text-xs font-bold bg-slate-800 text-white px-5 py-2.5 rounded-2xl hover:bg-slate-700"
+                    onClick={() => setAiTab('timeline')}
+                    className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      aiTab === 'timeline'
+                        ? 'bg-rose-500 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
                   >
-                    Retry Playback
+                    <ListOrdered className="w-3.5 h-3.5" />
+                    <span>Timeline ({timeline?.length || 0})</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setAiTab('ai');
+                      if (!aiDiagnostic && activeSession) {
+                        handleRunAiDiagnostics(activeSession.session_id);
+                      }
+                    }}
+                    className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                      aiTab === 'ai'
+                        ? 'bg-gradient-to-r from-rose-500 to-amber-500 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                    <span>AI Copilot</span>
                   </button>
                 </div>
-              ) : replayEvents ? (
-                <ReplayPlayer events={replayEvents} width={850} height={480} />
-              ) : null}
+
+                {/* Tab 1: Interactive Event Timeline */}
+                {aiTab === 'timeline' && (
+                  <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                    {loadingTimeline ? (
+                      <div className="flex flex-col items-center justify-center h-48 text-slate-500 text-xs">
+                        <Loader2 className="w-5 h-5 animate-spin mb-2 text-rose-500" />
+                        <span>Extracting event markers...</span>
+                      </div>
+                    ) : timeline && timeline.length > 0 ? (
+                      timeline.map((item) => (
+                        <div
+                          key={item.id}
+                          onClick={() => handleTimelineClick(item)}
+                          className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all hover:scale-[1.01] ${
+                            item.severity === 'warning'
+                              ? 'bg-amber-950/20 border-amber-800/40 hover:bg-amber-950/40 text-amber-200'
+                              : item.severity === 'error'
+                              ? 'bg-rose-950/25 border-rose-800/50 hover:bg-rose-950/45 text-rose-200'
+                              : 'bg-slate-950/50 border-slate-800/60 hover:bg-slate-800/40 text-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between text-[11px] mb-1">
+                            <span className="font-mono font-bold px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400">
+                              {item.offset_formatted}
+                            </span>
+                            <span className="text-[10px] uppercase font-bold tracking-wider opacity-70">
+                              {item.event_type}
+                            </span>
+                          </div>
+                          <p className="text-xs font-medium line-clamp-2 leading-relaxed">
+                            {item.label}
+                          </p>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-12 text-slate-500 text-xs">
+                        No telemetry events recorded for this session.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Tab 2: AI Copilot Diagnostics */}
+                {aiTab === 'ai' && (
+                  <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+                    {loadingAi ? (
+                      <div className="flex flex-col items-center justify-center h-56 text-slate-400 text-xs text-center p-4">
+                        <Sparkles className="w-8 h-8 animate-pulse text-amber-400 mb-2" />
+                        <span className="font-bold text-slate-200">Analyzing DOM mutations & friction...</span>
+                        <span className="text-slate-500 mt-1">Inspecting rage-clicks, drop-offs, and console errors</span>
+                      </div>
+                    ) : aiDiagnostic ? (
+                      <div className="space-y-3">
+                        {/* Friction Gauge */}
+                        <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800/80 flex items-center justify-between">
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">UX Friction Index</span>
+                            <div className="text-lg font-black text-white flex items-center gap-2">
+                              <span>{aiDiagnostic.friction_score}/100</span>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                aiDiagnostic.level_color === 'rose'
+                                  ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                  : aiDiagnostic.level_color === 'amber'
+                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                              }`}>
+                                {aiDiagnostic.friction_level}
+                              </span>
+                            </div>
+                          </div>
+                          <Zap className={`w-6 h-6 ${
+                            aiDiagnostic.level_color === 'rose' ? 'text-rose-400' : 'text-amber-400'
+                          }`} />
+                        </div>
+
+                        {/* Intent Summary */}
+                        <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800/60">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Visitor Intent</span>
+                          <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                            {aiDiagnostic.intent_summary}
+                          </p>
+                        </div>
+
+                        {/* Detected Friction Points */}
+                        <div className="space-y-1.5">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Detected Friction Points</span>
+                          {aiDiagnostic.friction_points?.map((fp: any, idx: number) => (
+                            <div key={idx} className="p-2.5 rounded-xl bg-slate-950/50 border border-slate-800 text-xs">
+                              <div className="flex items-center justify-between font-bold text-slate-200 text-[11px] mb-0.5">
+                                <span>{fp.type}</span>
+                                <span className="text-[10px] font-mono text-slate-400">{fp.element}</span>
+                              </div>
+                              <p className="text-slate-400 text-[11px] leading-relaxed">{fp.description}</p>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Developer Fix Recommendation */}
+                        <div className="p-3 rounded-xl bg-gradient-to-br from-rose-950/30 to-amber-950/30 border border-rose-800/40">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-rose-400">Engineering Recommendation</span>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(aiDiagnostic.developer_recommendation);
+                                setCopiedFix(true);
+                                setTimeout(() => setCopiedFix(false), 2000);
+                              }}
+                              className="text-[10px] flex items-center gap-1 text-slate-300 hover:text-white"
+                            >
+                              {copiedFix ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                              <span>{copiedFix ? 'Copied' : 'Copy'}</span>
+                            </button>
+                          </div>
+                          <p className="text-xs text-slate-200 leading-relaxed font-medium">
+                            {aiDiagnostic.developer_recommendation}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-10">
+                        <button
+                          onClick={() => activeSession && handleRunAiDiagnostics(activeSession.session_id)}
+                          className="px-4 py-2 bg-gradient-to-r from-rose-500 to-amber-500 text-white rounded-xl text-xs font-bold shadow-md hover:scale-105 transition-all"
+                        >
+                          Run AI Friction Diagnostic
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
+
     </div>
   );
 }
