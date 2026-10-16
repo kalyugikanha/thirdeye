@@ -77,21 +77,21 @@ interface RecentSession {
 
 export default function WorkspaceDashboard() {
   const router = useRouter();
-  const [userName, setUserName] = useState('Aakash');
-  const [userEmail, setUserEmail] = useState('scan.pe.in@gmail.com');
+  const [userName, setUserName] = useState('');
+  const [userEmail, setUserEmail] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<ConnectionStatus>({
-    is_connected: true,
-    snippet_active: true,
-    dns_verified: true,
+    is_connected: false,
+    snippet_active: false,
+    dns_verified: false,
     apm_active: false,
-    total_events: 8,
-    total_recordings: 1,
-    domain: 'growinsight.co.in',
-    api_key: 'te_live_990c733a065d43b3b70bb0c1227d2f3c',
-    project_id: 1,
-    dns_token: 'te_txt_growinsight'
+    total_events: 0,
+    total_recordings: 0,
+    domain: '',
+    api_key: '',
+    project_id: null,
+    dns_token: ''
   });
 
   const [recentSessions, setRecentSessions] = useState<RecentSession[]>([]);
@@ -117,7 +117,7 @@ export default function WorkspaceDashboard() {
         const u = JSON.parse(storedUser);
         if (u.name) setUserName(u.name);
         if (u.email) setUserEmail(u.email);
-        if (u.role === 'ADMIN' || u.email === 'admin@thirdeye.io' || u.email === 'scan.pe.in@gmail.com') {
+        if (u.role === 'ADMIN' || u.role === 'SUPERADMIN' || u.email === 'admin@thirdeye.io') {
           setIsAdmin(true);
         }
       }
@@ -165,8 +165,8 @@ export default function WorkspaceDashboard() {
   };
 
   const copySnippet = () => {
-    const key = status.api_key || 'te_live_990c733a065d43b3b70bb0c1227d2f3c';
-    const snippet = `<script>\n  (function(t,h,i,r,d){\n    t.ThirdEye=t.ThirdEye||{};\n    var s=h.createElement('script');\n    s.src='${API_BASE}/public/te.js';\n    s.setAttribute('data-key',i);\n    h.head.appendChild(s);\n  })(window,document,'${key}');\n</script>`;
+    if (!status.api_key) return;
+    const snippet = `<script>\n  (function(t,h,i,r,d){\n    t.ThirdEye=t.ThirdEye||{};\n    var s=h.createElement('script');\n    s.src='${API_BASE}/public/te.js';\n    s.setAttribute('data-key',i);\n    h.head.appendChild(s);\n  })(window,document,'${status.api_key}');\n</script>`;
     navigator.clipboard.writeText(snippet);
     setCopiedSnippet(true);
     setTimeout(() => setCopiedSnippet(false), 2500);
@@ -385,10 +385,10 @@ export default function WorkspaceDashboard() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5 overflow-hidden">
                   <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-rose-400 to-amber-300 text-slate-900 flex items-center justify-center font-bold text-xs flex-shrink-0">
-                    {userName.charAt(0).toUpperCase()}
+                    {(userName || userEmail || 'U').charAt(0).toUpperCase()}
                   </div>
                   <div className="overflow-hidden">
-                    <p className="text-xs font-semibold text-slate-900 truncate">{userName}</p>
+                    <p className="text-xs font-semibold text-slate-900 truncate">{userName || userEmail || 'Workspace User'}</p>
                     <p className="text-[10px] text-slate-500 truncate" title={status.domain || userEmail}>
                       {status.domain || userEmail}
                     </p>
@@ -455,7 +455,7 @@ export default function WorkspaceDashboard() {
 
               {/* Title & User Greeting */}
               <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900">
-                Welcome, {userName}!
+                Welcome{userName ? `, ${userName}` : ''}!
               </h1>
               
               {/* Tagline Requested by User */}

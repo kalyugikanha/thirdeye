@@ -37,6 +37,37 @@ STORAGE_DIR_ROOT.mkdir(parents=True, exist_ok=True)
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
 
+def safe_migrate_sqlite_schema():
+    # SQLite startup schema auto-migration for dns_verified and dns_token
+    try:
+        with engine.connect() as _conn:
+            for col_sql in [
+                "ALTER TABLE projects ADD COLUMN dns_verified BOOLEAN DEFAULT 0",
+                "ALTER TABLE projects ADD COLUMN dns_token TEXT"
+            ]:
+                try:
+                    _conn.execute(text(col_sql))
+                    _conn.commit()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    for _db_path in [BASE_DIR / "thirdeye.db", ROOT_DIR / "thirdeye.db"]:
+        if _db_path.exists():
+            try:
+                with sqlite3.connect(str(_db_path)) as _sconn:
+                    cols = [c[1] for c in _sconn.execute("PRAGMA table_info(projects)").fetchall()]
+                    if 'dns_verified' not in cols:
+                        _sconn.execute("ALTER TABLE projects ADD COLUMN dns_verified BOOLEAN DEFAULT 0")
+                    if 'dns_token' not in cols:
+                        _sconn.execute("ALTER TABLE projects ADD COLUMN dns_token TEXT")
+                    _sconn.commit()
+            except Exception:
+                pass
+
+safe_migrate_sqlite_schema()
+
 # Ensure SessionRecording alias view and triggers exist in SQLite
 try:
     with engine.connect() as _conn:
@@ -109,6 +140,7 @@ def read_root():
 
 @app.on_event('startup')
 def create_default_user():
+    safe_migrate_sqlite_schema()
     db = next(get_db())
     org = db.query(models.Organization).filter(models.Organization.name == 'ThirdEye Admin').first()
     if not org:
@@ -259,7 +291,12 @@ def register_user(user: UserCreate, db: Session = Depends(get_db)):
     if db_user:
         raise HTTPException(status_code=400, detail='Email already registered')
     
-    clean_domain = (user.domain or "growinsight.co.in").replace('https://', '').replace('http://', '').strip('/')
+    domain_candidate = user.domain
+    if not domain_candidate and user.email and '@' in user.email:
+        domain_candidate = user.email.split('@')[1]
+    if not domain_candidate:
+        domain_candidate = "example.com"
+    clean_domain = domain_candidate.replace('https://', '').replace('http://', '').strip('/')
     org_name = user.organization_name or (clean_domain.split('.')[0].capitalize() if clean_domain else "My Workspace")
     org = models.Organization(name=org_name)
     db.add(org)
@@ -305,9 +342,20 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     access_token = auth.create_access_token(data={'sub': user.email})
     return {'access_token': access_token, 'token_type': 'bearer', 'user': {'name': user.name, 'email': user.email, 'org_id': user.organization_id, 'role': user.role}}
 
+# --- TENANT ISOLATION HELPERS ---
+def is_superadmin_user(user: models.User) -> bool:
+    return bool(user and (user.role == 'SUPERADMIN' or user.email == 'admin@thirdeye.io'))
+
+def get_user_projects(db: Session, user: models.User) -> List[models.Project]:
+    return db.query(models.Project).filter(models.Project.organization_id == user.organization_id).all()
+
+def get_user_project_ids(db: Session, user: models.User) -> List[int]:
+    projects = get_user_projects(db, user)
+    return [p.id for p in projects]
+
 # --- EVENT INGESTION (Public, with /api/v1/collect alias for AdBlocker resilience) ---
 class EventCreate(BaseModel):
-    api_key: str
+    api_key: Optional[str] = None
     event_type: str
     url: str
     referrer: Optional[str] = ""
@@ -317,11 +365,12 @@ class EventCreate(BaseModel):
 @app.post('/api/v1/track')
 @app.post('/api/v1/collect')
 def track_event(event: EventCreate, request: Request, db: Session = Depends(get_db)):
-    project = db.query(models.Project).filter(models.Project.api_key == event.api_key).first()
+    key = event.api_key or request.headers.get("data-key") or request.headers.get("x-api-key")
+    if not key or not key.strip():
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API key")
+    project = db.query(models.Project).filter(models.Project.api_key == key.strip()).first()
     if not project:
-        project = db.query(models.Project).first()
-    if not project:
-        raise HTTPException(status_code=400, detail='Invalid API Key')
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API key")
     db_event = models.Event(
         project_id=project.id, event_type=event.event_type, url=event.url, referrer=event.referrer or "",
         session_id=event.session_id, properties=event.properties
@@ -342,39 +391,27 @@ class RecordingPayload(BaseModel):
     meta: Optional[Dict[str, Any]] = None
 
 @app.post('/api/v1/recordings')
-def create_or_append_recording(payload: RecordingPayload, db: Session = Depends(get_db)):
+def create_or_append_recording(payload: RecordingPayload, request: Request, db: Session = Depends(get_db)):
     if not payload.session_id or not payload.session_id.strip():
         raise HTTPException(status_code=400, detail='session_id is required')
     
     session_id = payload.session_id.strip()
 
-    # Resolve project if api_key or project_id supplied
-    resolved_project_id = None
-    if payload.api_key:
-        project = db.query(models.Project).filter(models.Project.api_key == payload.api_key).first()
-        if project:
-            resolved_project_id = project.id
-    elif payload.project_id is not None:
-        project = db.query(models.Project).filter(models.Project.id == payload.project_id).first()
-        if project:
-            resolved_project_id = project.id
-        else:
-            resolved_project_id = payload.project_id
+    # Look up project strictly by provided api_key
+    key = payload.api_key or request.headers.get("data-key") or request.headers.get("x-api-key")
+    if not key or not key.strip():
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API key")
 
-    # If unresolved, check existing session recording or event
+    project = db.query(models.Project).filter(models.Project.api_key == key.strip()).first()
+    if not project:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API key")
+
+    resolved_project_id = project.id
+
+    # If an existing recording exists, verify it belongs to this project
     existing_rec = db.query(models.SessionRecording).filter(models.SessionRecording.session_id == session_id).first()
-    if resolved_project_id is None and existing_rec and existing_rec.project_id is not None:
-        resolved_project_id = existing_rec.project_id
-
-    if resolved_project_id is None:
-        event_match = db.query(models.Event).filter(models.Event.session_id == session_id).first()
-        if event_match and event_match.project_id:
-            resolved_project_id = event_match.project_id
-
-    if resolved_project_id is None:
-        first_proj = db.query(models.Project).first()
-        if first_proj:
-            resolved_project_id = first_proj.id
+    if existing_rec and existing_rec.project_id is not None and existing_rec.project_id != resolved_project_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Session belongs to another project")
 
     # Handle storage files and continuous batch appends
     file_name = f"{session_id}.json.gz"
@@ -420,8 +457,7 @@ def create_or_append_recording(payload: RecordingPayload, db: Session = Depends(
                         vp_height = max(int(ev_data.get("height")), 1)
 
             if not discovered_url:
-                proj_obj = db.query(models.Project).filter(models.Project.id == resolved_project_id).first()
-                discovered_url = f"https://{proj_obj.domain}/" if (proj_obj and proj_obj.domain) else "https://growinsight.co.in/"
+                discovered_url = f"https://{project.domain}/" if (project and project.domain) else f"https://session-{session_id}.local/"
 
             base_meta = payload.meta or {"browser": "Chrome", "os": "Windows", "screen": f"{vp_width}x{vp_height}"}
 
@@ -520,15 +556,39 @@ def create_or_append_recording(payload: RecordingPayload, db: Session = Depends(
     }
 
 @app.get('/api/v1/recordings')
-def list_recordings(project_id: Optional[int] = None, db: Session = Depends(get_db)):
+def list_recordings(
+    project_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    user_project_ids = get_user_project_ids(db, current_user)
+    is_admin = is_superadmin_user(current_user)
+
+    if not is_admin and not user_project_ids:
+        return []
+
     query = db.query(models.SessionRecording)
-    if project_id is not None:
-        query = query.filter(models.SessionRecording.project_id == project_id)
+    if is_admin:
+        if project_id is not None:
+            query = query.filter(models.SessionRecording.project_id == project_id)
+    else:
+        if project_id is not None:
+            if project_id not in user_project_ids:
+                raise HTTPException(status_code=403, detail="Access denied to requested project")
+            query = query.filter(models.SessionRecording.project_id == project_id)
+        else:
+            query = query.filter(models.SessionRecording.project_id.in_(user_project_ids))
+
     recordings = query.order_by(models.SessionRecording.created_at.desc()).all()
     results = []
+
+    proj_cache = {p.id: p.domain for p in db.query(models.Project).filter(models.Project.id.in_(user_project_ids)).all()} if user_project_ids else {}
+
     for r in recordings:
         first_event = db.query(models.Event).filter(models.Event.session_id == r.session_id).order_by(models.Event.created_at.asc()).first()
-        entry_url = first_event.url if first_event else "https://growinsight.co.in/"
+        proj_domain = proj_cache.get(r.project_id) or ""
+        default_url = f"https://{proj_domain}/" if proj_domain else ""
+        entry_url = (first_event.url if (first_event and first_event.url) else default_url) or ""
         event_count = db.query(models.Event).filter(models.Event.session_id == r.session_id).count()
         client_meta = (first_event.properties or {}) if first_event else {}
         results.append({
@@ -548,7 +608,24 @@ def list_recordings(project_id: Optional[int] = None, db: Session = Depends(get_
 
 @app.get('/api/v1/recordings/{session_id}')
 @app.get('/api/v1/recordings/{session_id}/replay')
-def get_recording(session_id: str, request: Request, raw: bool = False, stream_gzip: bool = False):
+def get_recording(
+    session_id: str,
+    request: Request,
+    raw: bool = False,
+    stream_gzip: bool = False,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    rec = db.query(models.SessionRecording).filter(models.SessionRecording.session_id == session_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail=f"Recording for session {session_id} not found")
+
+    is_admin = is_superadmin_user(current_user)
+    if not is_admin:
+        user_project_ids = get_user_project_ids(db, current_user)
+        if rec.project_id not in user_project_ids:
+            raise HTTPException(status_code=403, detail="Forbidden: session recording belongs to another tenant")
+
     target_file = None
     for candidate in [
         STORAGE_DIR_API / f"{session_id}.json.gz",
@@ -560,8 +637,15 @@ def get_recording(session_id: str, request: Request, raw: bool = False, stream_g
             target_file = candidate
             break
 
+    if not target_file and rec.file_path:
+        for base in [BASE_DIR, ROOT_DIR]:
+            candidate = base / rec.file_path
+            if candidate.exists():
+                target_file = candidate
+                break
+
     if not target_file:
-        raise HTTPException(status_code=404, detail=f"Recording for session {session_id} not found")
+        raise HTTPException(status_code=404, detail=f"Recording file for session {session_id} not found")
 
     accept_header = request.headers.get("accept", "").lower()
     return_gzip = raw or stream_gzip or ("application/gzip" in accept_header or "application/x-gzip" in accept_header)
@@ -581,13 +665,422 @@ def get_recording(session_id: str, request: Request, raw: bool = False, stream_g
         with open(target_file, "rt", encoding="utf-8") as f:
             return json.load(f)
 
-# --- HELPER FOR ISOLATION ---
-def get_user_projects(db: Session, user: models.User):
-    return db.query(models.Project).filter(models.Project.organization_id == user.organization_id).all()
+# --- DOMAIN SIMULATION GENERATOR ---
+def generate_domain_rrweb_events(domain: str, brand_name: str, t_ms: Optional[int] = None) -> List[Dict[str, Any]]:
+    if t_ms is None:
+        t_ms = int(datetime.utcnow().timestamp() * 1000) - 18000
 
-def get_user_project_ids(db: Session, user: models.User):
-    projects = get_user_projects(db, user)
-    return [p.id for p in projects]
+    css_content = """
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; }
+      header { background: #1e293b; border-bottom: 1px solid #334155; padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; }
+      .brand { font-size: 20px; font-weight: 800; color: #38bdf8; letter-spacing: -0.02em; }
+      nav { display: flex; gap: 24px; }
+      nav a { color: #94a3b8; text-decoration: none; font-size: 14px; font-weight: 500; }
+      .btn { background: #38bdf8; color: #0f172a; font-weight: 700; padding: 10px 20px; border-radius: 8px; border: none; cursor: pointer; }
+      .hero { padding: 80px 32px; text-align: center; max-width: 900px; margin: 0 auto; }
+      .badge { display: inline-block; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); color: #38bdf8; padding: 6px 16px; border-radius: 9999px; font-size: 13px; font-weight: 600; margin-bottom: 24px; }
+      .hero h1 { font-size: 44px; font-weight: 800; line-height: 1.2; margin-bottom: 20px; }
+      .hero p { font-size: 18px; color: #94a3b8; margin-bottom: 32px; }
+      .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; padding: 0 32px 80px; max-width: 1100px; margin: 0 auto; }
+      .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; }
+      .card h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; color: #f1f5f9; }
+      .card p { font-size: 14px; color: #94a3b8; line-height: 1.5; }
+      footer { border-top: 1px solid #334155; padding: 32px; text-align: center; color: #64748b; font-size: 13px; }
+    """
+
+    node_id = 0
+    def nid():
+        nonlocal node_id
+        node_id += 1
+        return node_id
+
+    doc_id = nid()
+    doctype_id = nid()
+    html_id = nid()
+    head_id = nid()
+    title_id = nid()
+    title_txt_id = nid()
+    style_id = nid()
+    style_txt_id = nid()
+    body_id = nid()
+
+    header_id = nid()
+    brand_id = nid()
+    brand_txt_id = nid()
+    nav_id = nid()
+    nav_a1_id = nid()
+    nav_a1_txt = nid()
+    nav_a2_id = nid()
+    nav_a2_txt = nid()
+
+    hero_id = nid()
+    badge_id = nid()
+    badge_txt = nid()
+    h1_id = nid()
+    h1_txt = nid()
+    p_id = nid()
+    p_txt = nid()
+    btn_id = nid()
+    btn_txt = nid()
+
+    cards_id = nid()
+    c1_id = nid(); c1_h = nid(); c1_ht = nid(); c1_p = nid(); c1_pt = nid()
+    c2_id = nid(); c2_h = nid(); c2_ht = nid(); c2_p = nid(); c2_pt = nid()
+    c3_id = nid(); c3_h = nid(); c3_ht = nid(); c3_p = nid(); c3_pt = nid()
+
+    footer_id = nid()
+    footer_txt = nid()
+
+    events = [
+        # 1. Meta Event
+        {
+            "type": 4,
+            "data": {
+                "href": f"https://{domain}/",
+                "width": 1440,
+                "height": 900
+            },
+            "timestamp": t_ms
+        },
+        # 2. Full Snapshot Event
+        {
+            "type": 2,
+            "data": {
+                "node": {
+                    "type": 0,
+                    "id": doc_id,
+                    "childNodes": [
+                        {
+                            "type": 1,
+                            "name": "html",
+                            "publicId": "",
+                            "systemId": "",
+                            "id": doctype_id
+                        },
+                        {
+                            "type": 2,
+                            "tagName": "html",
+                            "attributes": {"lang": "en"},
+                            "id": html_id,
+                            "childNodes": [
+                                {
+                                    "type": 2,
+                                    "tagName": "head",
+                                    "attributes": {},
+                                    "id": head_id,
+                                    "childNodes": [
+                                        {
+                                            "type": 2,
+                                            "tagName": "title",
+                                            "attributes": {},
+                                            "id": title_id,
+                                            "childNodes": [{"type": 3, "textContent": f"{brand_name} - Home", "id": title_txt_id}]
+                                        },
+                                        {
+                                            "type": 2,
+                                            "tagName": "style",
+                                            "attributes": {},
+                                            "id": style_id,
+                                            "childNodes": [{"type": 3, "textContent": css_content, "id": style_txt_id}]
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": 2,
+                                    "tagName": "body",
+                                    "attributes": {},
+                                    "id": body_id,
+                                    "childNodes": [
+                                        {
+                                            "type": 2,
+                                            "tagName": "header",
+                                            "attributes": {},
+                                            "id": header_id,
+                                            "childNodes": [
+                                                {
+                                                    "type": 2,
+                                                    "tagName": "div",
+                                                    "attributes": {"class": "brand"},
+                                                    "id": brand_id,
+                                                    "childNodes": [{"type": 3, "textContent": brand_name, "id": brand_txt_id}]
+                                                },
+                                                {
+                                                    "type": 2,
+                                                    "tagName": "nav",
+                                                    "attributes": {},
+                                                    "id": nav_id,
+                                                    "childNodes": [
+                                                        {
+                                                            "type": 2,
+                                                            "tagName": "a",
+                                                            "attributes": {"href": "#features"},
+                                                            "id": nav_a1_id,
+                                                            "childNodes": [{"type": 3, "textContent": "Features", "id": nav_a1_txt}]
+                                                        },
+                                                        {
+                                                            "type": 2,
+                                                            "tagName": "a",
+                                                            "attributes": {"href": "#about"},
+                                                            "id": nav_a2_id,
+                                                            "childNodes": [{"type": 3, "textContent": "About", "id": nav_a2_txt}]
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 2,
+                                            "tagName": "section",
+                                            "attributes": {"class": "hero"},
+                                            "id": hero_id,
+                                            "childNodes": [
+                                                {
+                                                    "type": 2,
+                                                    "tagName": "div",
+                                                    "attributes": {"class": "badge"},
+                                                    "id": badge_id,
+                                                    "childNodes": [{"type": 3, "textContent": "Verified Production Domain", "id": badge_txt}]
+                                                },
+                                                {
+                                                    "type": 2,
+                                                    "tagName": "h1",
+                                                    "attributes": {},
+                                                    "id": h1_id,
+                                                    "childNodes": [{"type": 3, "textContent": f"Welcome to {brand_name}", "id": h1_txt}]
+                                                },
+                                                {
+                                                    "type": 2,
+                                                    "tagName": "p",
+                                                    "attributes": {},
+                                                    "id": p_id,
+                                                    "childNodes": [{"type": 3, "textContent": f"Accelerate your workflow on {domain}.", "id": p_txt}]
+                                                },
+                                                {
+                                                    "type": 2,
+                                                    "tagName": "button",
+                                                    "attributes": {"class": "btn"},
+                                                    "id": btn_id,
+                                                    "childNodes": [{"type": 3, "textContent": "Explore Platform", "id": btn_txt}]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 2,
+                                            "tagName": "section",
+                                            "attributes": {"class": "cards"},
+                                            "id": cards_id,
+                                            "childNodes": [
+                                                {
+                                                    "type": 2,
+                                                    "tagName": "div",
+                                                    "attributes": {"class": "card"},
+                                                    "id": c1_id,
+                                                    "childNodes": [
+                                                        {"type": 2, "tagName": "h3", "attributes": {}, "id": c1_h, "childNodes": [{"type": 3, "textContent": "Analytics", "id": c1_ht}]},
+                                                        {"type": 2, "tagName": "p", "attributes": {}, "id": c1_p, "childNodes": [{"type": 3, "textContent": f"Real-time event capture on {domain}", "id": c1_pt}]}
+                                                    ]
+                                                },
+                                                {
+                                                    "type": 2,
+                                                    "tagName": "div",
+                                                    "attributes": {"class": "card"},
+                                                    "id": c2_id,
+                                                    "childNodes": [
+                                                        {"type": 2, "tagName": "h3", "attributes": {}, "id": c2_h, "childNodes": [{"type": 3, "textContent": "Session Replay", "id": c2_ht}]},
+                                                        {"type": 2, "tagName": "p", "attributes": {}, "id": c2_p, "childNodes": [{"type": 3, "textContent": "Pixel-perfect replay with strict privacy", "id": c2_pt}]}
+                                                    ]
+                                                },
+                                                {
+                                                    "type": 2,
+                                                    "tagName": "div",
+                                                    "attributes": {"class": "card"},
+                                                    "id": c3_id,
+                                                    "childNodes": [
+                                                        {"type": 2, "tagName": "h3", "attributes": {}, "id": c3_h, "childNodes": [{"type": 3, "textContent": "APM & Uptime", "id": c3_ht}]},
+                                                        {"type": 2, "tagName": "p", "attributes": {}, "id": c3_p, "childNodes": [{"type": 3, "textContent": "Sub-millisecond latency & error tracing", "id": c3_pt}]}
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": 2,
+                                            "tagName": "footer",
+                                            "attributes": {},
+                                            "id": footer_id,
+                                            "childNodes": [{"type": 3, "textContent": f"© 2026 {brand_name} ({domain}). All rights reserved.", "id": footer_txt}]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                "initialOffset": {"left": 0, "top": 0}
+            },
+            "timestamp": t_ms + 100
+        },
+        # 3. Mouse Movement toward hero CTA
+        {
+            "type": 3,
+            "data": {
+                "source": 1,
+                "positions": [
+                    {"x": 200, "y": 150, "id": header_id, "timeOffset": 0},
+                    {"x": 400, "y": 250, "id": hero_id, "timeOffset": 800},
+                    {"x": 720, "y": 360, "id": btn_id, "timeOffset": 1800},
+                    {"x": 725, "y": 365, "id": btn_id, "timeOffset": 2400}
+                ]
+            },
+            "timestamp": t_ms + 2500
+        },
+        # 4. Click on CTA Button
+        {
+            "type": 3,
+            "data": {
+                "source": 2,
+                "type": 2,
+                "id": btn_id,
+                "x": 725,
+                "y": 365
+            },
+            "timestamp": t_ms + 5200
+        },
+        # 5. Scroll down to inspect cards
+        {
+            "type": 3,
+            "data": {
+                "source": 3,
+                "id": html_id,
+                "x": 0,
+                "y": 260
+            },
+            "timestamp": t_ms + 8000
+        },
+        # 6. Mouse movement over feature cards
+        {
+            "type": 3,
+            "data": {
+                "source": 1,
+                "positions": [
+                    {"x": 380, "y": 550, "id": c1_id, "timeOffset": 0},
+                    {"x": 720, "y": 550, "id": c2_id, "timeOffset": 1200},
+                    {"x": 980, "y": 550, "id": c3_id, "timeOffset": 2500}
+                ]
+            },
+            "timestamp": t_ms + 11000
+        },
+        # 7. Final click on Analytics card
+        {
+            "type": 3,
+            "data": {
+                "source": 2,
+                "type": 2,
+                "id": c1_id,
+                "x": 380,
+                "y": 550
+            },
+            "timestamp": t_ms + 16500
+        }
+    ]
+    return events
+
+@app.post('/api/v1/recordings/simulate')
+def simulate_session_recording(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    projects = get_user_projects(db, current_user)
+    if not projects:
+        clean_domain = (current_user.email.split('@')[1] if '@' in current_user.email else "example.com").lower()
+        new_proj = models.Project(
+            name=f"{clean_domain} Production",
+            domain=clean_domain,
+            organization_id=current_user.organization_id,
+            api_key=f"te_live_{uuid.uuid4().hex}",
+            dns_token=f"te_txt_{uuid.uuid4().hex[:12]}"
+        )
+        db.add(new_proj)
+        db.commit()
+        db.refresh(new_proj)
+        project = new_proj
+    else:
+        project = projects[0]
+
+    domain = project.domain or "example.com"
+    brand_name = domain.split('.')[0].capitalize()
+    sim_session_id = f"sim_{uuid.uuid4().hex[:12]}"
+    file_name = f"{sim_session_id}.json.gz"
+    relative_path = f"storage/recordings/{file_name}"
+
+    events = generate_domain_rrweb_events(domain, brand_name)
+    gz_bytes = gzip.compress(json.dumps(events).encode("utf-8"))
+
+    # Save to storage directories
+    for st_dir in [STORAGE_DIR_API, STORAGE_DIR_ROOT]:
+        st_dir.mkdir(parents=True, exist_ok=True)
+        with open(st_dir / file_name, "wb") as f:
+            f.write(gz_bytes)
+        # Also plain json for fallbacks
+        with open(st_dir / f"{sim_session_id}.json", "w", encoding="utf-8") as f:
+            json.dump(events, f)
+
+    # Insert into SessionRecording
+    rec = models.SessionRecording(
+        session_id=sim_session_id,
+        project_id=project.id,
+        duration=18,
+        file_path=relative_path,
+        created_at=datetime.utcnow()
+    )
+    db.add(rec)
+
+    # Insert initial pageview and click events under caller's project
+    pv_event = models.Event(
+        project_id=project.id,
+        event_type="pageview",
+        url=f"https://{domain}/",
+        referrer="https://google.com/",
+        session_id=sim_session_id,
+        properties={
+            "browser": "Chrome",
+            "os": "Windows",
+            "screen": "1440x900",
+            "domain": domain
+        },
+        created_at=datetime.utcnow() - timedelta(seconds=18)
+    )
+    click_event = models.Event(
+        project_id=project.id,
+        event_type="click",
+        url=f"https://{domain}/",
+        referrer="https://google.com/",
+        session_id=sim_session_id,
+        properties={
+            "browser": "Chrome",
+            "os": "Windows",
+            "screen": "1440x900",
+            "x": 50,
+            "y": 45,
+            "tag": "button",
+            "text": "Explore Platform"
+        },
+        created_at=datetime.utcnow() - timedelta(seconds=8)
+    )
+    db.add(pv_event)
+    db.add(click_event)
+    db.commit()
+    db.refresh(rec)
+
+    return {
+        "status": "simulated",
+        "session_id": sim_session_id,
+        "project_id": project.id,
+        "domain": project.domain,
+        "duration": 18,
+        "file_path": relative_path,
+        "event_count": len(events)
+    }
 
 # --- DASHBOARD & ANALYTICS (Protected) ---
 @app.get('/api/v1/dashboard/stats')
@@ -1036,6 +1529,9 @@ class MonitorCreate(BaseModel):
 
 @app.post('/api/v1/monitors')
 def create_monitor(data: MonitorCreate, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    user_project_ids = get_user_project_ids(db, current_user)
+    if not is_superadmin_user(current_user) and data.project_id not in user_project_ids:
+        raise HTTPException(status_code=403, detail="Forbidden: project does not belong to user")
     monitor = models.UptimeMonitor(project_id=data.project_id, name=data.name, url=data.url)
     db.add(monitor)
     db.commit()
@@ -1110,6 +1606,9 @@ def check_monitor(monitor_id: int, db: Session = Depends(get_db), current_user: 
     monitor = db.query(models.UptimeMonitor).filter(models.UptimeMonitor.id == monitor_id).first()
     if not monitor:
         raise HTTPException(status_code=404, detail="Monitor not found")
+    user_project_ids = get_user_project_ids(db, current_user)
+    if not is_superadmin_user(current_user) and monitor.project_id not in user_project_ids:
+        raise HTTPException(status_code=403, detail="Forbidden: monitor does not belong to user")
     start = tm.time()
     try:
         req = ur.Request(monitor.url, headers={"User-Agent": "ThirdEye-Uptime-Monitor/2.0"})
@@ -1322,10 +1821,7 @@ def get_click_heatmap(project_id: Optional[int] = None, db: Session = Depends(ge
 # ===================== PHASE 4: PUBLIC STATUS PAGES =====================
 @app.get('/api/v1/public/status/{org_slug}')
 def get_public_status(org_slug: str, db: Session = Depends(get_db)):
-    # Find organization by name or slug match
     org = db.query(models.Organization).filter(models.Organization.name.ilike(f"%{org_slug.replace('-', ' ')}%")).first()
-    if not org:
-        org = db.query(models.Organization).first()
     if not org:
         raise HTTPException(status_code=404, detail="Organization status page not found")
 
@@ -1373,6 +1869,9 @@ def get_funnel_analytics(funnel_id: int, db: Session = Depends(get_db), current_
     funnel = db.query(models.Funnel).filter(models.Funnel.id == funnel_id).first()
     if not funnel:
         raise HTTPException(status_code=404, detail="Funnel not found")
+    user_project_ids = get_user_project_ids(db, current_user)
+    if not is_superadmin_user(current_user) and funnel.project_id not in user_project_ids:
+        raise HTTPException(status_code=403, detail="Forbidden: funnel belongs to another tenant")
 
     steps = funnel.steps_json or []
     step_results = []
@@ -1485,7 +1984,11 @@ def security_scan(data: SecurityScanRequest, current_user: models.User = Depends
 # ===================== PHASE 4: BLOG ENGAGEMENT =====================
 @app.get('/api/v1/analytics/blogs')
 def get_blog_analytics(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    events = db.query(models.Event).filter(models.Event.url.like("%/blog%")).all()
+    user_project_ids = get_user_project_ids(db, current_user)
+    if is_superadmin_user(current_user):
+        events = db.query(models.Event).filter(models.Event.url.like("%/blog%")).all()
+    else:
+        events = db.query(models.Event).filter(models.Event.project_id.in_(user_project_ids), models.Event.url.like("%/blog%")).all() if user_project_ids else []
     total_articles = len(set(e.url for e in events)) or 4
     
     return {
@@ -1669,12 +2172,13 @@ class APMReportPayload(BaseModel):
     error_detail: Optional[str] = None
 
 @app.post('/api/v1/apm/report')
-def report_apm_metric(payload: APMReportPayload, db: Session = Depends(get_db)):
-    proj = db.query(models.Project).filter(models.Project.api_key == payload.api_key).first()
+def report_apm_metric(payload: APMReportPayload, request: Request, db: Session = Depends(get_db)):
+    key = payload.api_key or request.headers.get("data-key") or request.headers.get("x-api-key")
+    if not key or not key.strip():
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API key")
+    proj = db.query(models.Project).filter(models.Project.api_key == key.strip()).first()
     if not proj:
-        proj = db.query(models.Project).first()
-    if not proj:
-        raise HTTPException(status_code=400, detail="Invalid API Key")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API key")
     trace = models.APMTrace(
         project_id=proj.id,
         service_name=payload.service_name or "web-backend",

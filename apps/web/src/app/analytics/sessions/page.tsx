@@ -64,6 +64,8 @@ export default function SessionsPage() {
   const [replayEvents, setReplayEvents] = useState<any[] | null>(null);
   const [loadingReplay, setLoadingReplay] = useState(false);
   const [replayError, setReplayError] = useState<string | null>(null);
+  const [simulating, setSimulating] = useState(false);
+  const [clientDomain, setClientDomain] = useState<string>('');
 
   const loadSessions = useCallback(async () => {
     try {
@@ -71,6 +73,14 @@ export default function SessionsPage() {
       setError(null);
       const token = typeof window !== 'undefined' ? localStorage.getItem('te_token') : null;
       const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+
+      // Fetch client project status to get current domain
+      fetch(apiUrl('/api/v1/projects/status'), { headers })
+        .then(r => r.json())
+        .then(st => {
+          if (st.domain) setClientDomain(st.domain);
+        })
+        .catch(() => {});
 
       const res = await fetch(apiUrl('/api/v1/recordings'), { headers });
       if (res.status === 401) {
@@ -96,6 +106,28 @@ export default function SessionsPage() {
   useEffect(() => {
     loadSessions();
   }, [loadSessions]);
+
+  const handleSimulate = async () => {
+    setSimulating(true);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('te_token') : null;
+      if (!token) return;
+      const res = await fetch(apiUrl('/api/v1/recordings/simulate'), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        await loadSessions();
+      } else {
+        alert('Could not simulate session. Please try again.');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Error generating test session.');
+    } finally {
+      setSimulating(false);
+    }
+  };
 
   const handleWatchReplay = async (session: SessionRecording) => {
     setActiveSession(session);
@@ -238,6 +270,24 @@ export default function SessionsPage() {
             </div>
 
             <div className="flex items-center gap-3">
+              <button
+                onClick={handleSimulate}
+                disabled={simulating}
+                className="px-3.5 py-2 bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-600 hover:to-orange-600 text-white text-xs font-bold rounded-2xl shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-50 hover:scale-[1.02]"
+                title="Simulate a test session on your domain"
+              >
+                {simulating ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Generating...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Simulate Session</span>
+                  </>
+                )}
+              </button>
               <span className="text-xs font-semibold px-3 py-1.5 bg-white text-slate-700 rounded-2xl border border-slate-200/60 shadow-sm flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                 <span>{recordings.length} Recorded Sessions</span>
@@ -273,17 +323,40 @@ export default function SessionsPage() {
               </div>
             ) : recordings.length === 0 ? (
               <div className="h-96 rounded-3xl bg-white border border-slate-100 flex flex-col items-center justify-center text-center p-8">
-                <Video className="w-12 h-12 text-slate-300 mb-3" />
-                <h3 className="text-base font-bold text-slate-800">No session recordings captured yet</h3>
-                <p className="text-xs text-slate-400 max-w-md mt-1 mb-6">
-                  Verify that <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700">te.js</code> is embedded on your website. Once visitors arrive, their interactive replays will stream here automatically.
+                <div className="w-16 h-16 rounded-3xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-400 mb-4 shadow-inner">
+                  <Video className="w-8 h-8 text-slate-400" />
+                </div>
+                <h3 className="text-base font-bold text-slate-800">
+                  No session recordings captured yet {clientDomain ? `for ${clientDomain}` : ''}
+                </h3>
+                <p className="text-xs text-slate-400 max-w-md mt-1.5 mb-6">
+                  Verify that <code className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-700 font-mono text-[11px]">te.js</code> is embedded on your website. Once visitors arrive, their interactive replays will stream here automatically.
                 </p>
-                <Link
-                  href="/onboarding"
-                  className="text-xs font-bold bg-slate-900 text-white px-4 py-2.5 rounded-2xl hover:bg-slate-800 shadow-sm transition-all"
-                >
-                  View Setup Instructions
-                </Link>
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  <button
+                    onClick={handleSimulate}
+                    disabled={simulating}
+                    className="text-xs font-bold bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-600 hover:to-orange-600 text-white px-5 py-2.5 rounded-2xl shadow-sm transition-all flex items-center gap-2 disabled:opacity-50 hover:scale-105"
+                  >
+                    {simulating ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Generating Test Session...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4" />
+                        <span>Simulate Test Session on {clientDomain || 'Your Domain'}</span>
+                      </>
+                    )}
+                  </button>
+                  <Link
+                    href="/onboarding"
+                    className="text-xs font-bold bg-slate-900 text-white px-4 py-2.5 rounded-2xl hover:bg-slate-800 shadow-sm transition-all"
+                  >
+                    View Setup Instructions
+                  </Link>
+                </div>
               </div>
             ) : (
               <div className="space-y-4">

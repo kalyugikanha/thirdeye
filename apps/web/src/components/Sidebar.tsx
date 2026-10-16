@@ -66,10 +66,10 @@ const NAV_GROUPS: NavGroup[] = [
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const [userEmail, setUserEmail] = useState('scan.pe.in@gmail.com');
-  const [domain, setDomain] = useState('growinsight.co.in');
+  const [userEmail, setUserEmail] = useState('');
+  const [domain, setDomain] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
-  const [isConnected, setIsConnected] = useState(true);
+  const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
     try {
@@ -77,7 +77,7 @@ export default function Sidebar() {
       if (storedUser) {
         const parsed = JSON.parse(storedUser);
         if (parsed.email) setUserEmail(parsed.email);
-        if (parsed.role === 'ADMIN' || parsed.email === 'admin@thirdeye.io' || parsed.email === 'scan.pe.in@gmail.com') {
+        if (parsed.role === 'ADMIN' || parsed.role === 'SUPERADMIN' || parsed.email === 'admin@thirdeye.io') {
           setIsAdmin(true);
         }
       }
@@ -127,14 +127,21 @@ export default function Sidebar() {
         <div className="p-3 rounded-2xl bg-white shadow-sm border border-slate-200/60 flex items-center justify-between">
           <div className="flex items-center gap-2 overflow-hidden">
             <Globe2 className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-            <span className="text-xs font-semibold text-slate-700 truncate" title={domain}>
-              {domain}
+            <span className="text-xs font-semibold text-slate-700 truncate" title={domain || 'Workspace'}>
+              {domain || 'Workspace'}
             </span>
           </div>
-          <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 flex-shrink-0">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            Active
-          </span>
+          {isConnected ? (
+            <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 flex-shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              Active
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 flex-shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+              Pending
+            </span>
+          )}
         </div>
 
         {/* Navigation Groups */}
@@ -210,10 +217,10 @@ export default function Sidebar() {
         <div className="p-3 rounded-2xl bg-white shadow-sm border border-slate-200/60 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 overflow-hidden">
             <div className="w-8 h-8 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-xs flex-shrink-0">
-              {userEmail.charAt(0).toUpperCase()}
+              {(userEmail ? userEmail.charAt(0) : 'U').toUpperCase()}
             </div>
             <div className="overflow-hidden">
-              <p className="text-xs font-semibold text-slate-800 truncate">{userEmail}</p>
+              <p className="text-xs font-semibold text-slate-800 truncate">{userEmail || 'Loading...'}</p>
               <p className="text-[10px] text-slate-400">Workspace Member</p>
             </div>
           </div>

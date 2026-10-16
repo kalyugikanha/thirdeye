@@ -33,9 +33,9 @@ export default function OnboardingPage() {
   const [activeProject, setActiveProject] = useState<Project | null>(null);
   
   // Form states
-  const [projectName, setProjectName] = useState('GrowInsight Production');
-  const [domain, setDomain] = useState('growinsight.co.in');
-  const [apiKey, setApiKey] = useState('te_live_990c733a065d43b3b70bb0c1227d2f3c');
+  const [projectName, setProjectName] = useState('');
+  const [domain, setDomain] = useState('');
+  const [apiKey, setApiKey] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -61,8 +61,8 @@ export default function OnboardingPage() {
           if (Array.isArray(projects) && projects.length > 0) {
             const p = projects[0];
             setActiveProject(p);
-            setProjectName(p.name || 'GrowInsight Production');
-            setDomain(p.domain || 'growinsight.co.in');
+            setProjectName(p.name || '');
+            setDomain(p.domain || '');
             if (p.api_key) setApiKey(p.api_key);
           }
         }
@@ -222,7 +222,7 @@ export default function OnboardingPage() {
                     value={projectName}
                     onChange={(e) => setProjectName(e.target.value)}
                     required
-                    placeholder="e.g. GrowInsight Production"
+                    placeholder="e.g. My Website Production"
                     className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
@@ -240,7 +240,7 @@ export default function OnboardingPage() {
                       value={domain}
                       onChange={(e) => setDomain(e.target.value)}
                       required
-                      placeholder="growinsight.co.in"
+                      placeholder="e.g. mydomain.com"
                       className="block w-full min-w-0 flex-1 rounded-none rounded-r-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-900 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
                     />
                   </div>
@@ -248,18 +248,20 @@ export default function OnboardingPage() {
               </div>
 
               <div className="pt-2 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-xs text-slate-500">
-                  <Globe2 className="w-3.5 h-3.5 text-blue-500" />
-                  <span>Current Site:</span>
-                  <a 
-                    href={`https://${domain.replace('https://', '')}`} 
-                    target="_blank" 
-                    rel="noreferrer" 
-                    className="font-mono text-blue-600 hover:underline flex items-center gap-1 font-semibold"
-                  >
-                    https://{domain.replace('https://', '')}/ <ExternalLink className="w-3 h-3" />
-                  </a>
-                </div>
+                {domain ? (
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <Globe2 className="w-3.5 h-3.5 text-blue-500" />
+                    <span>Current Site:</span>
+                    <a 
+                      href={`https://${domain.replace(/^https?:\/\//, '').replace(/\/$/, '')}`} 
+                      target="_blank" 
+                      rel="noreferrer" 
+                      className="font-mono text-blue-600 hover:underline flex items-center gap-1 font-semibold"
+                    >
+                      https://{domain.replace(/^https?:\/\//, '').replace(/\/$/, '')}/ <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                ) : <div />}
 
                 <button
                   type="submit"

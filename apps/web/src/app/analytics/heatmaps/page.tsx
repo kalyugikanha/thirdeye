@@ -36,7 +36,8 @@ export default function HeatmapPage() {
   const router = useRouter();
   const [points, setPoints] = useState<ClickPoint[]>([]);
   const [urls, setUrls] = useState<string[]>([]);
-  const [selectedUrl, setSelectedUrl] = useState<string>('https://growinsight.co.in/');
+  const [selectedUrl, setSelectedUrl] = useState<string>('');
+  const [projectDomain, setProjectDomain] = useState<string>('');
   const [totalClicks, setTotalClicks] = useState(0);
   const [loading, setLoading] = useState(true);
   const [deviceView, setDeviceView] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
@@ -48,6 +49,20 @@ export default function HeatmapPage() {
     if (!token) return router.push('/login');
     try {
       setLoading(true);
+      let clientDomain = '';
+      try {
+        const statusRes = await fetch(apiUrl('/api/v1/projects/status'), {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (statusRes.ok) {
+          const statusData = await statusRes.json();
+          if (statusData.domain) {
+            clientDomain = statusData.domain;
+            setProjectDomain(clientDomain);
+          }
+        }
+      } catch (e) {}
+
       const res = await fetch(apiUrl('/api/v1/analytics/heatmaps'), {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -56,18 +71,18 @@ export default function HeatmapPage() {
         const incomingPoints = data.points || [];
         setPoints(incomingPoints);
         setTotalClicks(data.total_clicks || incomingPoints.length);
-        const distinctUrls = data.urls || [];
+        const distinctUrls: string[] = data.urls || [];
         
-        // Ensure growinsight.co.in is in the URL list
-        const combinedUrls = Array.from(new Set([
-          'https://growinsight.co.in/',
-          'https://growinsight.co.in/about-us/',
-          ...distinctUrls
-        ]));
+        const defaultPage = clientDomain ? `https://${clientDomain.replace(/^https?:\/\//, '').replace(/\/$/, '')}/` : '';
+        const combinedUrls = Array.from(new Set(
+          distinctUrls.length > 0 ? distinctUrls : (defaultPage ? [defaultPage] : [])
+        ));
         setUrls(combinedUrls);
 
-        if (!selectedUrl && combinedUrls.length > 0) {
-          setSelectedUrl(combinedUrls[0]);
+        if (combinedUrls.length > 0) {
+          setSelectedUrl(prev => (prev && combinedUrls.includes(prev) ? prev : combinedUrls[0]));
+        } else if (defaultPage) {
+          setSelectedUrl(defaultPage);
         }
       }
     } catch (err) {
@@ -251,7 +266,7 @@ export default function HeatmapPage() {
                 Top Click Target
               </div>
               <div className="text-sm font-bold text-slate-900 truncate mt-1.5">
-                {sortedElements.length > 0 ? sortedElements[0][1].text : 'Explore Services'}
+                {sortedElements.length > 0 ? sortedElements[0][1].text : (activePoints.length === 0 ? 'No clicks recorded' : 'Interactive Element')}
               </div>
             </div>
           </div>
@@ -269,7 +284,7 @@ export default function HeatmapPage() {
               {/* URL Address Pill */}
               <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 text-slate-300 text-xs px-4 py-1.5 rounded-full max-w-md truncate font-mono">
                 <Globe2 className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
-                <span className="truncate">{selectedUrl || 'https://growinsight.co.in/'}</span>
+                <span className="truncate">{selectedUrl || (projectDomain ? `https://${projectDomain}/` : 'No Webpage Selected')}</span>
               </div>
 
               <div className="flex items-center gap-2 text-xs text-slate-400 font-mono">
@@ -287,10 +302,31 @@ export default function HeatmapPage() {
                   'w-[400px] min-h-[540px]'
                 }`}
               >
+                {/* 0 Clicks Empty State Banner */}
+                {points.length === 0 && !loading && (
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 bg-slate-950/60 backdrop-blur-sm text-center">
+                    <div className="w-12 h-12 rounded-2xl bg-orange-500/20 text-orange-400 flex items-center justify-center mb-3">
+                      <Flame className="w-6 h-6" />
+                    </div>
+                    <h4 className="text-base font-bold text-white">
+                      No Click Heatmaps Recorded Yet
+                    </h4>
+                    <p className="text-xs text-slate-300 max-w-md mt-1 mb-4">
+                      {projectDomain ? `No click interactions captured for ${projectDomain} yet.` : 'No click interactions captured yet.'} Clicks will visualize as coordinate heat halos automatically once visitors interact with your pages.
+                    </p>
+                    <Link
+                      href="/onboarding"
+                      className="px-4 py-2 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold shadow-sm transition-all"
+                    >
+                      Verify Tracking Snippet
+                    </Link>
+                  </div>
+                )}
+
                 {/* Backdrop Layer */}
                 {backdropMode === 'live' ? (
                   <iframe
-                    src={selectedUrl || 'https://growinsight.co.in/'}
+                    src={selectedUrl || (projectDomain ? `https://${projectDomain}/` : 'about:blank')}
                     title="Website Heatmap Backdrop"
                     className="absolute inset-0 w-full h-full border-0 pointer-events-none opacity-85 select-none"
                     sandbox="allow-same-origin allow-scripts"

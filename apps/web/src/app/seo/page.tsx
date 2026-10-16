@@ -54,7 +54,7 @@ interface SecurityReport {
 
 export default function SeoAndSecurityPage() {
   const router = useRouter();
-  const [url, setUrl] = useState('https://growinsight.co.in/');
+  const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<AuditReport | null>(null);
   const [secReport, setSecReport] = useState<SecurityReport | null>(null);
@@ -115,21 +115,23 @@ export default function SeoAndSecurityPage() {
         router.push('/login');
         return;
       }
-      let initialUrl = 'https://growinsight.co.in/';
+      let initialUrl = '';
       try {
-        const projRes = await fetch(apiUrl('/api/projects'), {
+        const projRes = await fetch(apiUrl('/api/v1/projects/status'), {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (projRes.ok) {
-          const projs = await projRes.json();
-          if (Array.isArray(projs) && projs.length > 0 && projs[0].domain) {
-            const clean = projs[0].domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
+          const statusData = await projRes.json();
+          if (statusData.domain) {
+            const clean = statusData.domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
             initialUrl = `https://${clean}/`;
             setUrl(initialUrl);
           }
         }
       } catch (e) {}
-      runFullAudit(initialUrl);
+      if (initialUrl) {
+        runFullAudit(initialUrl);
+      }
     };
     init();
   }, [router, runFullAudit]);
@@ -171,7 +173,7 @@ export default function SeoAndSecurityPage() {
                 <Globe2 className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                 <input
                   type="url"
-                  placeholder="https://growinsight.co.in/"
+                  placeholder="https://yourdomain.com/"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
