@@ -98,7 +98,9 @@ export default function SessionsPage() {
         })
         .catch(() => {});
 
-      const res = await fetch(apiUrl('/api/v1/recordings'), { headers });
+      const activePid = typeof window !== 'undefined' ? localStorage.getItem('te_active_project_id') : null;
+      const q = activePid ? `?project_id=${activePid}` : '';
+      const res = await fetch(apiUrl(`/api/v1/recordings${q}`), { headers });
       if (res.status === 401) {
         localStorage.removeItem('te_token');
         router.push('/login');
@@ -313,10 +315,13 @@ export default function SessionsPage() {
     }
   };
 
-  const formatRelativeTime = (isoString: string) => {
+  const formatRelativeTime = (isoString?: string) => {
     if (!isoString) return 'Just now';
     try {
-      const diffSec = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
+      const normalized = (!isoString.endsWith('Z') && !isoString.includes('+') && !isoString.includes('-', 10))
+        ? `${isoString}Z`
+        : isoString;
+      const diffSec = Math.max(0, Math.floor((Date.now() - new Date(normalized).getTime()) / 1000));
       if (diffSec < 60) return 'Just now';
       if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
       if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
@@ -620,7 +625,7 @@ export default function SessionsPage() {
                     </button>
                   </div>
                 ) : replayEvents ? (
-                  <ReplayPlayer events={replayEvents} width={680} height={450} seekTime={seekTime} />
+                  <ReplayPlayer events={replayEvents} width={680} height={450} seekTime={seekTime} siteUrl={activeSession?.entry_url || clientDomain} />
                 ) : null}
               </div>
 

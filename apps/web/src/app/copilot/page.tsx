@@ -60,6 +60,13 @@ export default function CopilotPage() {
 
   useEffect(() => {
     loadContext();
+    if (typeof window !== 'undefined') {
+      const sp = new URLSearchParams(window.location.search);
+      const qParam = sp.get('q');
+      if (qParam && qParam.trim()) {
+        handleAsk(qParam.trim());
+      }
+    }
   }, [loadContext]);
 
   const handleAsk = async (textToSend?: string) => {

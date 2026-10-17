@@ -274,21 +274,6 @@ def create_default_user():
         except Exception as e:
             print("Could not write growinsight snapshot:", e)
 
-        existing_rec = db.query(models.SessionRecording).filter(models.SessionRecording.session_id == "2n69l5dt3kd").first()
-        if not existing_rec:
-            db.add(models.SessionRecording(
-                session_id="2n69l5dt3kd",
-                project_id=proj.id,
-                duration=18,
-                file_path="storage/recordings/2n69l5dt3kd.json.gz",
-                created_at=datetime.utcnow() - timedelta(minutes=15)
-            ))
-            db.commit()
-        else:
-            existing_rec.duration = 18
-            existing_rec.project_id = proj.id
-            db.commit()
-
 # --- AUTH ---
 class UserCreate(BaseModel):
     email: EmailStr
@@ -569,12 +554,15 @@ def create_or_append_recording(payload: RecordingPayload, request: Request, db: 
             t1 = all_events[-1].get("timestamp")
             if isinstance(t0, (int, float)) and isinstance(t1, (int, float)) and t1 >= t0:
                 ts_sec = int(round((t1 - t0) / 1000.0))
-                calc_duration = max(calc_duration, ts_sec)
+                if ts_sec <= 7200:
+                    calc_duration = max(calc_duration, ts_sec)
+                else:
+                    calc_duration = max(calc_duration, 7200)
         except Exception:
             pass
 
     if existing_rec and existing_rec.duration:
-        calc_duration = max(calc_duration, existing_rec.duration)
+        calc_duration = max(calc_duration, min(existing_rec.duration, 7200))
 
     relative_path = f"storage/recordings/{file_name}"
 
@@ -619,16 +607,16 @@ def list_recordings(
         return []
 
     query = db.query(models.SessionRecording)
-    if is_admin:
-        if project_id is not None:
-            query = query.filter(models.SessionRecording.project_id == project_id)
+    if project_id is not None:
+        if not is_admin and project_id not in user_project_ids:
+            raise HTTPException(status_code=403, detail="Access denied to requested project")
+        query = query.filter(models.SessionRecording.project_id == project_id)
     else:
-        if project_id is not None:
-            if project_id not in user_project_ids:
-                raise HTTPException(status_code=403, detail="Access denied to requested project")
-            query = query.filter(models.SessionRecording.project_id == project_id)
-        else:
+        # Default to user's organization projects (even for superadmin to prevent accidental workspace leakage)
+        if user_project_ids:
             query = query.filter(models.SessionRecording.project_id.in_(user_project_ids))
+        elif not is_admin:
+            return []
 
     recordings = query.order_by(models.SessionRecording.created_at.desc()).all()
     results = []
@@ -642,13 +630,20 @@ def list_recordings(
         entry_url = (first_event.url if (first_event and first_event.url) else default_url) or ""
         event_count = db.query(models.Event).filter(models.Event.session_id == r.session_id).count()
         client_meta = (first_event.properties or {}) if first_event else {}
+        
+        iso_created = None
+        if r.created_at:
+            iso_created = r.created_at.isoformat()
+            if not iso_created.endswith('Z'):
+                iso_created += 'Z'
+
         results.append({
             "id": r.id,
             "session_id": r.session_id,
             "project_id": r.project_id,
             "duration": r.duration,
             "file_path": r.file_path,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "created_at": iso_created,
             "entry_url": entry_url,
             "browser": client_meta.get("browser", "Chrome"),
             "os": client_meta.get("os", "Windows"),

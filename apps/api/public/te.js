@@ -13,9 +13,32 @@
     }
   }
 
-  // 2. Persistent session identifier
-  var sessionId = localStorage.getItem('te_session') || Math.random().toString(36).substring(2);
-  localStorage.setItem('te_session', sessionId);
+  // 2. Persistent session identifier with 30-minute inactivity expiration
+  var SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+  var storedSession = null;
+  var lastActivity = 0;
+  try {
+    storedSession = localStorage.getItem('te_session');
+    lastActivity = parseInt(localStorage.getItem('te_session_activity') || '0', 10);
+  } catch (e) {}
+
+  var now = Date.now();
+  var sessionId = storedSession;
+  if (!sessionId || !lastActivity || (now - lastActivity > SESSION_TIMEOUT_MS)) {
+    sessionId = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    try {
+      localStorage.setItem('te_session', sessionId);
+    } catch (e) {}
+  }
+  try {
+    localStorage.setItem('te_session_activity', String(now));
+  } catch (e) {}
+
+  function touchActivity() {
+    try {
+      localStorage.setItem('te_session_activity', String(Date.now()));
+    } catch (e) {}
+  }
 
   var sessionStartTime = Date.now();
   var events = [];
@@ -24,6 +47,7 @@
 
   // 3. Batch transmission logic (every 5 seconds)
   function flushRecordings() {
+    touchActivity();
     if (events.length === 0) return;
 
     var batch = events.splice(0, events.length);
