@@ -137,3 +137,53 @@ def test_04_cross_tenant_isolation_under_direct_and_unfiltered_queries(client):
     alpha_sess = recs_a[0]["session_id"]
     forbidden_replay = client.get(f"/api/v1/recordings/{alpha_sess}/replay", headers=hb)
     assert forbidden_replay.status_code == 403
+
+
+def test_05_empty_recording_payload_discarded_without_db_bloat(client):
+    headers, pid, api_key, domain = register_tenant(client, "empty-guard.com")
+
+    empty_sess = f"empty_{uuid.uuid4().hex[:6]}"
+    payload = {
+        "session_id": empty_sess,
+        "api_key": api_key,
+        "duration": 0,
+        "url": f"https://{domain}/",
+        "events": []
+    }
+    res = client.post("/api/v1/recordings", json=payload)
+    assert res.status_code == 200
+    assert res.json().get("status") == "ignored_empty"
+
+    # Confirm database does not have an empty recording row
+    recs = client.get(f"/api/v1/recordings?project_id={pid}", headers=headers).json()
+    assert len(recs) == 0
+
+
+def test_06_idle_tab_2_hour_duration_inflation_prevented(client):
+    headers, pid, api_key, domain = register_tenant(client, "idle-test.com")
+
+    idle_sess = f"idle_{uuid.uuid4().hex[:6]}"
+    now_ms = 1700000000000
+
+    # Tab was open for 7200s (2 hours), but events span only 14s of real user activity
+    payload = {
+        "session_id": idle_sess,
+        "api_key": api_key,
+        "duration": 7200,
+        "url": f"https://{domain}/pricing",
+        "meta": {"browser": "Firefox", "os": "macOS"},
+        "events": [
+            {"type": 4, "data": {"href": f"https://{domain}/pricing"}, "timestamp": now_ms},
+            {"type": 3, "data": {"source": 1}, "timestamp": now_ms + 14000}
+        ]
+    }
+    res = client.post("/api/v1/recordings", json=payload)
+    assert res.status_code == 200
+    assert res.json().get("status") == "stored"
+
+    # Stored duration must be 14s, NOT 7200s!
+    recs = client.get(f"/api/v1/recordings?project_id={pid}", headers=headers).json()
+    saved = next((r for r in recs if r["session_id"] == idle_sess), None)
+    assert saved is not None
+    assert saved["duration"] == 14, f"Expected 14s duration, but got {saved['duration']}s"
+

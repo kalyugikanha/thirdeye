@@ -13,8 +13,9 @@
     }
   }
 
-  // 2. Persistent session identifier with 30-minute inactivity expiration
+  // 2. Persistent session identifier with 30-minute inactivity expiration & 2-minute idle pause
   var SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+  var IDLE_PAUSE_MS = 2 * 60 * 1000; // 2 minutes of inactivity pauses recording to eliminate server load
   var storedSession = null;
   var lastActivity = 0;
   try {
@@ -34,20 +35,119 @@
     localStorage.setItem('te_session_activity', String(now));
   } catch (e) {}
 
+  var sessionStartTime = Date.now();
+  var lastUserInteractionTime = Date.now();
+  var hasUserInteraction = false;
+  var hasRecordedError = false;
+  var isRecording = false;
+  var isIdlePaused = false;
+  var recordStopFn = null;
+  var events = [];
+  var flushTimer = null;
+
   function touchActivity() {
+    var ts = Date.now();
+    lastActivity = ts;
+    lastUserInteractionTime = ts;
+    hasUserInteraction = true;
     try {
-      localStorage.setItem('te_session_activity', String(Date.now()));
+      localStorage.setItem('te_session_activity', String(ts));
     } catch (e) {}
   }
 
-  var sessionStartTime = Date.now();
-  var events = [];
-  var isRecording = false;
-  var flushTimer = null;
+  // Session rotation: if idle > 30 minutes, cleanly rotate session ID on re-engagement
+  function checkAndRotateSession() {
+    var t = Date.now();
+    var stored = 0;
+    try {
+      stored = parseInt(localStorage.getItem('te_session_activity') || '0', 10);
+    } catch (e) {}
+    var elapsed = t - (stored || lastActivity);
+    if (elapsed > SESSION_TIMEOUT_MS) {
+      if (events.length > 0 && (hasUserInteraction || hasRecordedError)) {
+        flushRecordings();
+      }
+      sessionId = Math.random().toString(36).substring(2) + Date.now().toString(36);
+      try {
+        localStorage.setItem('te_session', sessionId);
+        localStorage.setItem('te_session_activity', String(t));
+      } catch (e) {}
+      sessionStartTime = t;
+      hasUserInteraction = false;
+      hasRecordedError = false;
+      if (typeof recordStopFn === 'function') {
+        try { recordStopFn(); } catch (e) {}
+        recordStopFn = null;
+        isRecording = false;
+        initRecorder();
+      }
+    }
+  }
+
+  function pauseRecording(reason) {
+    if (isIdlePaused) return;
+    isIdlePaused = true;
+    if (flushTimer) {
+      clearInterval(flushTimer);
+      flushTimer = null;
+    }
+    // Flush pending events before sleeping if active
+    if (events.length > 0 && (hasUserInteraction || hasRecordedError)) {
+      flushRecordings();
+    }
+  }
+
+  function resumeRecording() {
+    checkAndRotateSession();
+    if (!isIdlePaused) return;
+    isIdlePaused = false;
+    touchActivity();
+    if (!flushTimer && isRecording) {
+      flushTimer = setInterval(flushRecordings, 5000);
+    }
+  }
+
+  // Throttled user activity handler for real user events only
+  var lastInputThrottle = 0;
+  function onUserActiveInput() {
+    var t = Date.now();
+    if (t - lastInputThrottle < 1000) return;
+    lastInputThrottle = t;
+    if (isIdlePaused) {
+      resumeRecording();
+    } else {
+      touchActivity();
+    }
+  }
+
+  window.addEventListener('click', onUserActiveInput, { passive: true, capture: true });
+  window.addEventListener('keydown', onUserActiveInput, { passive: true, capture: true });
+  window.addEventListener('scroll', onUserActiveInput, { passive: true });
+  window.addEventListener('touchstart', onUserActiveInput, { passive: true });
+  window.addEventListener('mousemove', onUserActiveInput, { passive: true });
+
+  // Tab visibility listener: pause recording when tab is hidden, resume when tab is visible
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+      pauseRecording('hidden');
+    } else {
+      resumeRecording();
+    }
+  });
 
   // 3. Batch transmission logic (every 5 seconds)
   function flushRecordings() {
-    touchActivity();
+    // Automatically pause if inactive for > 2 minutes
+    if (Date.now() - lastUserInteractionTime > IDLE_PAUSE_MS) {
+      pauseRecording('idle');
+      return;
+    }
+
+    // Cost optimization: discard or hold if zero user interactions and zero errors
+    if (!hasUserInteraction && !hasRecordedError) {
+      return;
+    }
+
     if (events.length === 0) return;
 
     var batch = events.splice(0, events.length);
@@ -78,6 +178,10 @@
 
   // 4. Page unload flush (sendBeacon / keepalive fetch)
   function flushOnUnload() {
+    // Discard bounce recordings with zero user interaction and zero errors to save storage
+    if (!hasUserInteraction && !hasRecordedError) {
+      return;
+    }
     if (events.length === 0) return;
     var batch = events.splice(0, events.length);
     var duration = Math.round((Date.now() - sessionStartTime) / 1000);
@@ -118,9 +222,12 @@
     }
 
     try {
-      recordFn({
+      recordStopFn = recordFn({
         emit: function(event) {
           events.push(event);
+          if (event && event.type === 3) {
+            hasUserInteraction = true;
+          }
         },
         inlineStylesheet: true,
         collectFonts: true,
@@ -144,7 +251,7 @@
       });
 
       isRecording = true;
-      if (!flushTimer) {
+      if (!flushTimer && !isIdlePaused) {
         flushTimer = setInterval(flushRecordings, 5000);
       }
       window.addEventListener('beforeunload', flushOnUnload);
@@ -406,6 +513,7 @@
 
   // 9. Code-Level Error Monitoring (JS Exceptions & Unhandled Promises)
   window.addEventListener('error', function(e) {
+    hasRecordedError = true;
     try {
       track('code_error', {
         message: e.message || 'Script error',
@@ -418,6 +526,7 @@
   });
 
   window.addEventListener('unhandledrejection', function(e) {
+    hasRecordedError = true;
     try {
       track('code_error', {
         message: e.reason ? (e.reason.message || String(e.reason)) : 'Unhandled Promise Rejection',
@@ -439,9 +548,9 @@
     } catch (e) {}
   });
 
-  // 11. Real-Time Presence Heartbeat (every 15s when active tab)
+  // 11. Real-Time Presence Heartbeat (every 15s when active tab, suspended if idle)
   function sendHeartbeat() {
-    if (document.visibilityState === 'hidden') return;
+    if (document.visibilityState === 'hidden' || isIdlePaused) return;
     try {
       fetch(apiHost + '/api/v1/live/heartbeat', {
         method: 'POST',

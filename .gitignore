@@ -16,4 +16,7 @@ __pycache__/
 # Test recordings
 **/storage/recordings/sess_*
 **/storage/recordings/sim_*
+**/storage/recordings/test_*
+**/storage/recordings/idle_*
+**/storage/recordings/empty_*
 

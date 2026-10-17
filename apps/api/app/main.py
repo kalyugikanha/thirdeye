@@ -473,6 +473,14 @@ def create_or_append_recording(payload: RecordingPayload, request: Request, db: 
     incoming_events = payload.events if payload.events is not None else []
     all_events = existing_events + incoming_events
 
+    # Discard empty recording payloads to eliminate wasted storage and empty database entries
+    if not all_events:
+        return {
+            "status": "ignored_empty",
+            "session_id": session_id,
+            "message": "Empty recording discarded to optimize storage"
+        }
+
     # Automatically sync pageviews & mouse clicks from rrweb stream into Events table
     # (Protects Dashboard, Analytics & Heatmaps even if visitor's browser blocks /api/v1/track)
     if resolved_project_id is not None:
@@ -546,20 +554,23 @@ def create_or_append_recording(payload: RecordingPayload, request: Request, db: 
         with open(file_root, "wb") as f:
             f.write(compressed_bytes)
 
-    # Calculate / update duration
-    calc_duration = payload.duration if (payload.duration is not None and payload.duration > 0) else 0
+    # Calculate realistic duration based on event timestamps (prevents 2-hour idle frozen replay gaps)
+    calc_duration = 0
     if len(all_events) >= 2:
         try:
             t0 = all_events[0].get("timestamp")
             t1 = all_events[-1].get("timestamp")
             if isinstance(t0, (int, float)) and isinstance(t1, (int, float)) and t1 >= t0:
                 ts_sec = int(round((t1 - t0) / 1000.0))
-                if ts_sec <= 7200:
-                    calc_duration = max(calc_duration, ts_sec)
-                else:
-                    calc_duration = max(calc_duration, 7200)
+                calc_duration = min(ts_sec, 7200)
         except Exception:
             pass
+
+    if calc_duration == 0:
+        if payload.duration is not None and 0 < payload.duration <= 1800:
+            calc_duration = payload.duration
+        else:
+            calc_duration = 1
 
     if existing_rec and existing_rec.duration:
         calc_duration = max(calc_duration, min(existing_rec.duration, 7200))
