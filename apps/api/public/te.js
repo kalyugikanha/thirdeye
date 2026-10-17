@@ -578,6 +578,70 @@
         });
       }).catch(function() {});
   }
+  // 15. Privacy-Safe Browser Network XHR / Fetch Failure & Latency Interceptor
+  function reportNetwork(endpoint, method, status, dur) {
+    if (!endpoint || !apiKey) return;
+    try {
+      if (endpoint.indexOf(apiHost) === 0 || endpoint.indexOf('/api/v1/network/collect') > -1) return;
+      if (status >= 400 || dur >= 1000 || status === 0) {
+        fetch(apiHost + '/api/v1/network/collect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            api_key: apiKey,
+            session_id: sessionId,
+            page_url: window.location.href,
+            endpoint_url: endpoint,
+            method: method || 'GET',
+            status_code: status,
+            duration_ms: Math.round(dur || 0)
+          }),
+          keepalive: true
+        }).catch(function() {});
+      }
+    } catch (e) {}
+  }
+
+  // Intercept fetch
+  if (window.fetch) {
+    var origFetch = window.fetch;
+    window.fetch = function() {
+      var args = arguments;
+      var urlStr = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
+      var methodStr = (args[1] && args[1].method) || (args[0] && args[0].method) || 'GET';
+      var startT = performance.now();
+      return origFetch.apply(this, args).then(function(res) {
+        var elapsed = performance.now() - startT;
+        reportNetwork(urlStr, methodStr, res.status, elapsed);
+        return res;
+      }).catch(function(err) {
+        var elapsed = performance.now() - startT;
+        reportNetwork(urlStr, methodStr, 0, elapsed);
+        throw err;
+      });
+    };
+  }
+
+  // Intercept XMLHttpRequest
+  if (window.XMLHttpRequest) {
+    var origOpen = XMLHttpRequest.prototype.open;
+    var origSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function(m, u) {
+      this._teMethod = m;
+      this._teUrl = u;
+      return origOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function() {
+      var xhr = this;
+      var startT = performance.now();
+      xhr.addEventListener('loadend', function() {
+        var elapsed = performance.now() - startT;
+        reportNetwork(xhr._teUrl, xhr._teMethod, xhr.status, elapsed);
+      });
+      return origSend.apply(this, arguments);
+    };
+  }
+
   initExperiments();
 
   // Initiate session recording

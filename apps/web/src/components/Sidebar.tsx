@@ -36,7 +36,11 @@ import {
   FlaskConical,
   Gauge,
   Plus,
-  ChevronDown
+  ChevronDown,
+  Bot,
+  Users2,
+  WifiOff,
+  Rocket
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiUrl, API_BASE } from '@/lib/api';
@@ -61,6 +65,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/analytics', icon: BarChart3, title: 'Traffic Analytics', lockedUnlessConnected: true },
       { href: '/analytics/sessions', icon: Video, title: 'Session Replays', badge: 'Replay', lockedUnlessConnected: true },
       { href: '/analytics/heatmaps', icon: Flame, title: 'Click Heatmaps', lockedUnlessConnected: true },
+      { href: '/analytics/cohorts', icon: Users2, title: 'Retention Cohorts', badge: 'Matrix' },
       { href: '/analytics/errors', icon: AlertTriangle, title: 'Errors & Issues', badge: 'BugTracker' },
       { href: '/analytics/journeys', icon: GitMerge, title: 'User Journey Flows', badge: 'Flow' },
       { href: '/analytics/goals', icon: Target, title: 'Conversion Goals', badge: 'ROI' },
@@ -74,6 +79,8 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/performance', icon: Gauge, title: 'Core Web Vitals', badge: 'CWV' },
       { href: '/devops', icon: Cpu, title: 'Server APM & APIs' },
+      { href: '/devops/network', icon: WifiOff, title: 'Network & API Inspector', badge: 'XHR' },
+      { href: '/devops/releases', icon: Rocket, title: 'Release Impact Tracker', badge: 'CI/CD' },
       { href: '/uptime', icon: Activity, title: 'Uptime & SSL' },
       { href: '/seo', icon: Search, title: 'SEO & Performance' },
     ]
@@ -81,6 +88,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Intelligence & Reports",
     items: [
+      { href: '/copilot', icon: Bot, title: 'AI Copilot Assistant', badge: 'AI' },
       { href: '/reports', icon: FileText, title: 'Executive Reports', badge: 'Export' },
       { href: '/settings/billing', icon: CreditCard, title: 'Plans & Billing' },
       { href: '/settings/storage', icon: HardDrive, title: 'BYOS Storage Hub', badge: 'Client' },

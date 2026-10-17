@@ -283,3 +283,30 @@ class WebVital(Base):
     ttfb_ms = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     project = relationship('Project')
+
+
+class Release(Base):
+    __tablename__ = 'releases'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    version = Column(String, index=True)          # e.g., 'v2.4.0'
+    commit_sha = Column(String, nullable=True)    # e.g., '3d2e6b4'
+    environment = Column(String, default='production')
+    notes = Column(String, nullable=True)
+    deployed_by = Column(String, default='CI/CD')
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    project = relationship('Project')
+
+
+class NetworkRequest(Base):
+    __tablename__ = 'network_requests'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    session_id = Column(String, index=True)
+    page_url = Column(String)
+    endpoint_url = Column(String, index=True)
+    method = Column(String, default='GET')
+    status_code = Column(Integer, index=True)
+    duration_ms = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    project = relationship('Project')

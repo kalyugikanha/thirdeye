@@ -16,7 +16,7 @@ import io
 from dotenv import load_dotenv
 load_dotenv()  # Load .env file so GEMINI_API_KEY is available
 from app.database import engine, Base, get_db
-from app import models, auth, enterprise, growth
+from app import models, auth, enterprise, growth, intelligence
 from pydantic import BaseModel
 try:
     import email_validator
@@ -113,6 +113,7 @@ for _db_path in [BASE_DIR / "thirdeye.db", ROOT_DIR / "thirdeye.db"]:
 app = FastAPI(title='ThirdEye AI Workspace API')
 app.include_router(enterprise.router)
 app.include_router(growth.router)
+app.include_router(intelligence.router)
 
 @app.middleware("http")
 async def cors_middleware(request: Request, call_next):
