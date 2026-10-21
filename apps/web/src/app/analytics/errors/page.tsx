@@ -71,7 +71,10 @@ interface RageClick {
   url: string;
   tag: string;
   text: string;
+  selector?: string;
   clicks: number;
+  coordinates?: { x: number | null; y: number | null };
+  session_id?: string;
   created_at: string | null;
 }
 
@@ -685,23 +688,51 @@ export default function ErrorsIntelligencePage() {
                           <div className="w-10 h-10 rounded-2xl bg-orange-50 text-orange-600 flex items-center justify-center font-bold flex-shrink-0">
                             <MousePointerClick className="w-5 h-5" />
                           </div>
-                          <div>
-                            <div className="flex items-center gap-2">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
                               <span className="text-[10px] font-bold uppercase tracking-wider text-orange-800 bg-orange-50 px-2 py-0.5 rounded-full border border-orange-200">
                                 UX Frustration Trigger
                               </span>
-                              <span className="text-xs font-bold text-slate-700 font-mono">
-                                &lt;{rage.tag}&gt; {rage.text ? `"${rage.text}"` : ''}
+                              <span className="text-xs font-bold text-slate-900 font-mono">
+                                {rage.text ? `"${rage.text}"` : `<${rage.tag}>`}
                               </span>
+                              {rage.selector && (
+                                <code className="text-[11px] font-mono px-2 py-0.5 rounded-lg bg-slate-900 text-amber-300 border border-slate-800">
+                                  {rage.selector}
+                                </code>
+                              )}
                             </div>
-                            <p className="text-xs text-slate-500 mt-1">
-                              Visitor repeatedly clicked element {rage.clicks} times within 500ms on {rage.url}.
+                            <p className="text-xs text-slate-500">
+                              Visitor repeatedly clicked element <span className="font-bold text-slate-800">{rage.clicks} times</span> within 500ms on{' '}
+                              <span className="font-mono text-slate-700">{rage.url}</span>.
                             </p>
+                            <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
+                              {rage.coordinates?.x !== undefined && rage.coordinates?.x !== null && (
+                                <span className="font-mono text-slate-500">
+                                  Coordinates: (x: {rage.coordinates.x}px, y: {rage.coordinates.y}px)
+                                </span>
+                              )}
+                              {rage.created_at && (
+                                <span>Recorded: {new Date(rage.created_at).toLocaleTimeString()}</span>
+                              )}
+                            </div>
                           </div>
                         </div>
 
-                        <div className="p-3 bg-orange-50 rounded-2xl border border-orange-200/60 text-xs text-orange-900 font-bold flex items-center gap-1.5">
-                          <span>{rage.clicks} Rapid Clicks</span>
+                        <div className="flex items-center gap-2 self-start sm:self-center">
+                          {rage.session_id && (
+                            <Link
+                              href={`/analytics/sessions?session=${rage.session_id}`}
+                              className="px-3 py-1.5 rounded-xl bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 text-xs font-bold transition-all flex items-center gap-1.5"
+                              title="Watch visitor rage click session replay"
+                            >
+                              <Video className="w-3.5 h-3.5" />
+                              <span>Watch Session</span>
+                            </Link>
+                          )}
+                          <div className="p-2.5 bg-orange-50 rounded-2xl border border-orange-200/60 text-xs text-orange-900 font-bold flex items-center gap-1.5">
+                            <span>{rage.clicks} Rapid Clicks</span>
+                          </div>
                         </div>
                       </div>
                     ))}

@@ -314,6 +314,39 @@
     document.head.appendChild(cdnScript);
   }
 
+  function getExactSelector(el) {
+    if (!el || el.nodeType !== 1) return '';
+    if (el.id) return '#' + el.id;
+    var path = [];
+    var curr = el;
+    while (curr && curr.nodeType === 1 && curr.tagName.toLowerCase() !== 'html' && path.length < 5) {
+      var tag = curr.tagName.toLowerCase();
+      if (curr.id) {
+        path.unshift('#' + curr.id);
+        break;
+      }
+      var cls = typeof curr.className === 'string' && curr.className.trim()
+        ? '.' + curr.className.trim().split(/\s+/).slice(0, 2).join('.')
+        : '';
+      var parent = curr.parentElement;
+      if (parent) {
+        var siblings = Array.prototype.filter.call(parent.children, function(child) {
+          return child.tagName === curr.tagName;
+        });
+        if (siblings.length > 1) {
+          var index = Array.prototype.indexOf.call(siblings, curr) + 1;
+          path.unshift(tag + cls + ':nth-of-type(' + index + ')');
+        } else {
+          path.unshift(tag + cls);
+        }
+      } else {
+        path.unshift(tag + cls);
+      }
+      curr = parent;
+    }
+    return path.join(' > ');
+  }
+
   function getClientMeta() {
     var ua = navigator.userAgent || '';
     var browser = 'Other';
@@ -329,12 +362,57 @@
     else if (ua.indexOf('iPhone') > -1 || ua.indexOf('iPad') > -1) os = 'iOS';
     else if (ua.indexOf('Linux') > -1) os = 'Linux';
 
+    // Deep Referrer & Traffic Channel Intelligence
+    var ref = document.referrer || '';
+    var refSource = 'Direct';
+    if (ref) {
+      if (ref.indexOf('l.instagram.com') > -1 || ref.indexOf('instagram.com') > -1) {
+        refSource = 'Instagram App / Bio Link';
+      } else if (ref.indexOf('facebook.com') > -1 || ref.indexOf('l.facebook.com') > -1) {
+        refSource = 'Facebook App / Feed';
+      } else if (ref.indexOf('web.whatsapp.com') > -1 || ref.indexOf('whatsapp') > -1) {
+        refSource = 'WhatsApp Broadcast Link';
+      } else if (ref.indexOf('google.') > -1) {
+        refSource = 'Google Search Engine';
+      } else if (ref.indexOf('linkedin.com') > -1) {
+        refSource = 'LinkedIn Network';
+      } else if (ref.indexOf('twitter.com') > -1 || ref.indexOf('x.com') > -1 || ref.indexOf('t.co') > -1) {
+        refSource = 'Twitter / X';
+      } else if (ref.indexOf('youtube.com') > -1) {
+        refSource = 'YouTube Referral';
+      } else {
+        try {
+          refSource = 'External (' + new URL(ref).hostname + ')';
+        } catch (e) {
+          refSource = 'External Referral';
+        }
+      }
+    }
+
+    // Ad Click Identification (GCLID, FBCLID, TTCLID, UTM)
+    var url = window.location.href;
+    var adChannel = null;
+    var searchKeyword = null;
+    try {
+      var params = new URLSearchParams(window.location.search);
+      searchKeyword = params.get('utm_term') || params.get('keyword') || params.get('q') || null;
+      if (params.get('fbclid')) adChannel = 'Meta Ads (Instagram / Facebook)';
+      else if (params.get('gclid')) adChannel = 'Google Ads Paid Search';
+      else if (params.get('ttclid')) adChannel = 'TikTok Ads';
+      else if (params.get('li_fat_id')) adChannel = 'LinkedIn Ads';
+      else if (params.get('utm_source')) adChannel = 'Campaign (' + params.get('utm_source') + ')';
+    } catch (e) {}
+
     return {
       browser: browser,
       os: os,
       screen: window.innerWidth + 'x' + window.innerHeight,
       title: document.title || '',
-      lang: navigator.language || 'en'
+      lang: navigator.language || 'en',
+      referrer: ref,
+      traffic_source: refSource,
+      ad_channel: adChannel,
+      search_keyword: searchKeyword
     };
   }
 
@@ -361,6 +439,31 @@
   // Automatically track initial pageview
   track('pageview');
 
+  // Detect Search Query from URL parameters on page load
+  try {
+    var initParams = new URLSearchParams(window.location.search);
+    var kw = initParams.get('utm_term') || initParams.get('keyword') || initParams.get('q') || initParams.get('search');
+    if (kw) {
+      track('search_query', { query: kw, source: 'landing_url_param' });
+    }
+  } catch (e) {}
+
+  // Detect On-Site Search form submissions
+  document.addEventListener('submit', function(ev) {
+    try {
+      var form = ev.target;
+      if (!form) return;
+      var sInput = form.querySelector('input[type="search"], input[name*="search" i], input[name="q"], input[name="query"], input[name="s"]');
+      if (sInput && sInput.value && sInput.value.trim().length >= 2) {
+        track('site_search', {
+          query: sInput.value.trim().substring(0, 100),
+          source: 'on_site_search_bar',
+          url: window.location.href
+        });
+      }
+    } catch (e) {}
+  }, true);
+
   // 8. Rage Clicks & Click Heatmap Tracking
   var lastClick = { time: 0, target: null, count: 0 };
   document.addEventListener('click', function(e) {
@@ -369,13 +472,15 @@
       var x = Math.round((e.pageX / Math.max(window.innerWidth, 1)) * 100);
       var y = Math.round((e.pageY / Math.max(document.documentElement.scrollHeight, window.innerHeight, 1)) * 100);
       var targetTag = e.target ? (e.target.tagName || '').toLowerCase() : '';
-      var targetText = e.target && e.target.innerText ? e.target.innerText.trim().substring(0, 30) : '';
+      var targetText = e.target && e.target.innerText ? e.target.innerText.trim().substring(0, 40) : (e.target && e.target.getAttribute ? (e.target.getAttribute('aria-label') || e.target.getAttribute('title') || '') : '');
+      var exactSelector = getExactSelector(e.target);
 
       track('click', {
         x: x,
         y: y,
         tag: targetTag,
         text: targetText,
+        selector: exactSelector,
         selectors: buildSelectors(e.target)
       });
 
@@ -386,10 +491,15 @@
         if (lastClick.count === 3) {
           track('rage_click', {
             tag: targetTag,
-            text: targetText,
+            text: targetText || targetTag,
+            selector: exactSelector,
+            selectors: buildSelectors(e.target),
+            client_x: e.clientX,
+            client_y: e.clientY,
             x: x,
             y: y,
-            clicks: lastClick.count
+            clicks: lastClick.count,
+            timestamp: Date.now()
           });
           openFeedback('rage_click');
         }
@@ -399,7 +509,7 @@
     } catch (clickErr) {}
   }, true);
 
-  // CSS selectors (#id, .class, tag) of the clicked element and its ancestors, used by click goals
+  // CSS selectors (#id, .class, tag) of the clicked element and its ancestors
   function buildSelectors(node) {
     var out = [];
     var depth = 0;

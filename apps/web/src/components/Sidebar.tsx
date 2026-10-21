@@ -40,7 +40,8 @@ import {
   Bot,
   Users2,
   WifiOff,
-  Rocket
+  Rocket,
+  Server
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiUrl, API_BASE } from '@/lib/api';
@@ -91,6 +92,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/copilot', icon: Bot, title: 'AI Copilot Assistant', badge: 'AI' },
       { href: '/reports', icon: FileText, title: 'Executive Reports', badge: 'Export' },
+      { href: '/analytics/competitors', icon: Globe2, title: 'Competitor Intel', badge: 'Rank' },
       { href: '/settings/billing', icon: CreditCard, title: 'Plans & Billing' },
       { href: '/settings/storage', icon: HardDrive, title: 'BYOS Storage Hub', badge: 'Client' },
       { href: '/marketing', icon: Share2, title: 'Marketing & Ads' },
@@ -118,6 +120,31 @@ export default function Sidebar() {
   const [newDomain, setNewDomain] = useState('');
   const [addingDomain, setAddingDomain] = useState(false);
   const [domainError, setDomainError] = useState('');
+  const [resources, setResources] = useState<{
+    server: {
+      droplet_ip: string;
+      os: string;
+      disk_total_gb: number;
+      disk_used_gb: number;
+      disk_free_gb: number;
+      disk_percent: number;
+      ram_total_gb: number;
+      ram_used_gb: number;
+      ram_free_gb: number;
+      ram_percent: number;
+      cpu_cores: number;
+      cpu_load_percent: number;
+    };
+    tenant: {
+      project_id: number;
+      domain: string;
+      session_count: number;
+      event_count: number;
+      storage_used_mb: number;
+      quota_limit_mb: number;
+      storage_percent: number;
+    };
+  } | null>(null);
 
   const fetchStatus = (overridePid?: number) => {
     const token = localStorage.getItem('te_token');
@@ -133,6 +160,15 @@ export default function Sidebar() {
           if (data.api_key) setApiKey(data.api_key);
           if (data.project_id) setActiveProjectId(data.project_id);
           setIsConnected(Boolean(data.is_connected));
+        })
+        .catch(() => {});
+
+      fetch(apiUrl('/api/v1/system/resources'), {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((resData) => {
+          if (resData) setResources(resData);
         })
         .catch(() => {});
 
@@ -408,7 +444,64 @@ export default function Sidebar() {
         </div>
 
         {/* Footer Profile & Logout */}
-        <div className="pt-4 space-y-2 border-t border-slate-100/80">
+        <div className="pt-3 space-y-2 border-t border-slate-100/80">
+          {/* Server & Tenant Resource Usage Card */}
+          {resources && (
+            <div className="p-3 rounded-2xl bg-slate-50/90 border border-slate-200/70 space-y-2 text-[11px]">
+              <div className="flex items-center justify-between text-slate-800 font-bold">
+                <div className="flex items-center gap-1.5">
+                  <Server className="w-3.5 h-3.5 text-indigo-600 flex-shrink-0" />
+                  <span>Droplet (80GB / 4GB RAM)</span>
+                </div>
+                <span className="text-[10px] text-emerald-600 font-mono font-semibold">Live</span>
+              </div>
+
+              {/* Disk Gauge */}
+              <div>
+                <div className="flex justify-between text-[10px] text-slate-500 mb-0.5">
+                  <span>Server Disk</span>
+                  <span className="font-mono text-slate-700 font-semibold">{resources.server.disk_used_gb} / {resources.server.disk_total_gb} GB ({resources.server.disk_percent}%)</span>
+                </div>
+                <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                  <div 
+                    className="bg-indigo-600 h-full rounded-full transition-all" 
+                    style={{ width: `${Math.min(resources.server.disk_percent, 100)}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* RAM & CPU */}
+              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200/60 text-[10px]">
+                <div>
+                  <span className="text-slate-400 block">RAM ({resources.server.ram_total_gb}G)</span>
+                  <span className="font-mono font-bold text-slate-700">{resources.server.ram_used_gb} GB used</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">CPU ({resources.server.cpu_cores} Cores)</span>
+                  <span className="font-mono font-bold text-slate-700">{resources.server.cpu_load_percent}% Load</span>
+                </div>
+              </div>
+
+              {/* Tenant Storage Consumption */}
+              <div className="pt-1.5 border-t border-slate-200/60">
+                <div className="flex justify-between text-[10px] mb-0.5">
+                  <span className="font-semibold text-slate-700 truncate max-w-[120px]">{resources.tenant.domain}</span>
+                  <span className="font-mono text-rose-600 font-bold">{resources.tenant.storage_used_mb} MB</span>
+                </div>
+                <div className="w-full bg-slate-200 h-1 rounded-full overflow-hidden">
+                  <div 
+                    className="bg-rose-500 h-full rounded-full transition-all" 
+                    style={{ width: `${Math.max(Math.min(resources.tenant.storage_percent * 5, 100), 2)}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-[9px] text-slate-400 mt-0.5">
+                  <span>{resources.tenant.session_count} sessions</span>
+                  <span>5GB Storage Quota</span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {isAdmin && (
             <Link
               href="/superadmin"
