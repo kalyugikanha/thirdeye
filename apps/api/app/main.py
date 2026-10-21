@@ -267,12 +267,47 @@ def create_default_user():
                 models.Event(project_id=proj.id, event_type="pageview", url="https://growinsight.co.in/contact/", referrer="https://growinsight.co.in/", session_id="sess_growinsight_live", properties={**base_props, "title": "Contact – GrowInsight"}, created_at=now_ts - timedelta(minutes=6)),
             ]
             db.add_all(seed_events)
-            db.commit()        # Ensure high-fidelity growinsight recording snapshot is generated & saved
+            db.commit()
+
         try:
             from app.rrweb_seed import write_growinsight_snapshot
             write_growinsight_snapshot([STORAGE_DIR_API, STORAGE_DIR_ROOT])
         except Exception as e:
             print("Could not write growinsight snapshot:", e)
+
+        # Enforce 7-Day Auto-Retention Policy: Clean up recordings older than 7 days
+        try:
+            cleaned = cleanup_expired_recordings(db, max_retention_days=7)
+            if cleaned > 0:
+                print(f"[ThirdEye Retention] Purged {cleaned} recordings older than 7 days.")
+        except Exception as e:
+            print("[ThirdEye Retention] Error during startup cleanup:", e)
+
+def cleanup_expired_recordings(db: Session, max_retention_days: int = 7) -> int:
+    """Purge recordings and on-disk files older than max_retention_days (default 7 days)."""
+    cutoff = datetime.utcnow() - timedelta(days=max_retention_days)
+    expired = db.query(models.SessionRecording).filter(models.SessionRecording.created_at < cutoff).all()
+    deleted_count = 0
+    for rec in expired:
+        file_name = f"{rec.session_id}.json.gz"
+        for storage_dir in (STORAGE_DIR_API, STORAGE_DIR_ROOT):
+            p = storage_dir / file_name
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+            p_json = storage_dir / f"{rec.session_id}.json"
+            if p_json.exists():
+                try:
+                    p_json.unlink()
+                except Exception:
+                    pass
+        db.delete(rec)
+        deleted_count += 1
+    if deleted_count > 0:
+        db.commit()
+    return deleted_count
 
 # --- AUTH ---
 class UserCreate(BaseModel):
@@ -1138,6 +1173,16 @@ def simulate_session_recording(
         "file_path": relative_path,
         "event_count": len(events)
     }
+
+@app.post('/api/v1/recordings/cleanup')
+def trigger_recordings_cleanup(
+    days: int = 7,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    """Trigger cleanup of recordings older than `days` (default 7 days)."""
+    count = cleanup_expired_recordings(db, max_retention_days=days)
+    return {"status": "cleaned", "deleted_recordings": count, "retention_days": days}
 
 # --- DASHBOARD & ANALYTICS (Protected) ---
 @app.get('/api/v1/dashboard/stats')
