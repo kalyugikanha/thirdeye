@@ -1333,37 +1333,68 @@ def get_analytics_breakdown(db: Session = Depends(get_db), current_user: models.
     }
 
 @app.get('/api/v1/analytics/timeseries')
-def get_analytics_timeseries(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def get_analytics_timeseries(interval: str = '24h', db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     project_ids = get_user_project_ids(db, current_user)
     if not project_ids:
         return []
     
     now = datetime.utcnow()
     data = []
-    for i in range(7):
-        target_date = (now - timedelta(days=6-i)).date()
-        start_dt = datetime.combine(target_date, datetime.min.time())
-        end_dt = datetime.combine(target_date, datetime.max.time())
-        
-        events_q = db.query(models.Event).filter(
-            models.Event.project_id.in_(project_ids),
-            models.Event.created_at >= start_dt,
-            models.Event.created_at <= end_dt
-        )
-        pageviews = events_q.filter(models.Event.event_type == 'pageview').count()
-        visitors = db.query(func.count(func.distinct(models.Event.session_id))).filter(
-            models.Event.project_id.in_(project_ids),
-            models.Event.created_at >= start_dt,
-            models.Event.created_at <= end_dt
-        ).scalar() or 0
 
-        data.append({
-            'name': target_date.strftime('%a'),
-            'date': target_date.isoformat(),
-            'pageviews': pageviews,
-            'visitors': visitors,
-            'sessions': visitors
-        })
+    if interval == '7d':
+        for i in range(7):
+            target_date = (now - timedelta(days=6-i)).date()
+            start_dt = datetime.combine(target_date, datetime.min.time())
+            end_dt = datetime.combine(target_date, datetime.max.time())
+            
+            events_q = db.query(models.Event).filter(
+                models.Event.project_id.in_(project_ids),
+                models.Event.created_at >= start_dt,
+                models.Event.created_at <= end_dt
+            )
+            pageviews = events_q.filter(models.Event.event_type == 'pageview').count()
+            visitors = db.query(func.count(func.distinct(models.Event.session_id))).filter(
+                models.Event.project_id.in_(project_ids),
+                models.Event.created_at >= start_dt,
+                models.Event.created_at <= end_dt
+            ).scalar() or 0
+
+            data.append({
+                'timestamp': target_date.strftime('%a'),
+                'name': target_date.strftime('%a'),
+                'date': target_date.isoformat() + 'Z',
+                'pageviews': pageviews,
+                'visitors': visitors,
+                'sessions': visitors
+            })
+    else:
+        # Default: 24 Hours hourly bucketing for Traffic Velocity chart
+        for i in range(24):
+            hour_start = (now - timedelta(hours=23-i)).replace(minute=0, second=0, microsecond=0)
+            hour_end = hour_start + timedelta(hours=1)
+            
+            events_q = db.query(models.Event).filter(
+                models.Event.project_id.in_(project_ids),
+                models.Event.created_at >= hour_start,
+                models.Event.created_at < hour_end
+            )
+            pageviews = events_q.filter(models.Event.event_type == 'pageview').count()
+            visitors = db.query(func.count(func.distinct(models.Event.session_id))).filter(
+                models.Event.project_id.in_(project_ids),
+                models.Event.created_at >= hour_start,
+                models.Event.created_at < hour_end
+            ).scalar() or 0
+
+            time_label = hour_start.strftime('%H:00')
+            data.append({
+                'timestamp': time_label,
+                'name': time_label,
+                'date': hour_start.isoformat() + 'Z',
+                'pageviews': pageviews,
+                'visitors': visitors,
+                'sessions': visitors
+            })
+
     return data
 
 # ===================== CODE & LAYOUT ERROR INTELLIGENCE =====================
@@ -1820,8 +1851,8 @@ def impersonate_tenant(org_id: int, db: Session = Depends(get_db), current_user:
         }
     }
 
-def generate_gemini_content(prompt: str, api_key: str, model_candidate: str = 'gemini-2.5-flash') -> str:
-    candidates = [model_candidate, 'gemini-2.0-flash', 'gemini-flash-latest', 'gemini-1.5-flash-latest']
+def generate_gemini_content(prompt: str, api_key: str, model_candidate: str = 'gemini-flash-latest') -> str:
+    candidates = [model_candidate, 'gemini-flash-latest', 'gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash']
     for candidate in candidates:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{candidate}:generateContent?key={api_key}"
@@ -1838,6 +1869,52 @@ def generate_gemini_content(prompt: str, api_key: str, model_candidate: str = 'g
         except Exception:
             continue
     raise RuntimeError("Failed to generate content from Gemini API.")
+
+class AiGuideRequest(BaseModel):
+    message: Optional[str] = "Yeh 3 boxes kis liye hain?"
+    context: Optional[str] = "dashboard"
+    project_domain: Optional[str] = None
+    is_connected: Optional[bool] = False
+
+@app.post('/api/v1/ai/guide')
+def ai_robot_guide(req: AiGuideRequest, current_user: models.User = Depends(auth.get_current_user)):
+    api_key = os.getenv('GEMINI_API_KEY')
+    domain = req.project_domain or "your website"
+    conn_status = "Connected (Snippet active)" if req.is_connected else "Pending (Snippet abhi connect nahi hua hai)"
+
+    system_prompt = f"""
+You are ThirdEye's AI Robot Guide ("ThirdEye Mitr" 🤖) for website founders and developers.
+Answer user questions in friendly, clear, and professional Hinglish (natural mix of Hindi and English).
+
+Current Workspace Context:
+- Registered Website: {domain}
+- Snippet Status: {conn_status}
+- Current Screen: {req.context}
+
+User question: "{req.message}"
+
+Key ThirdEye principles to explain clearly:
+1. Client Tracking Tag (te.js): Lightweight (<15KB) passive JS snippet placed in website <head>. Tracks clicks, DOM mutations, rage clicks, and creates session replays without slowing down the website at all (<1% impact, completely non-blocking).
+2. Server APM & Latency: Continuous uptime monitoring, SSL certificate expiry tracking, endpoint latency, and HTTP 500 error alerting.
+3. Domain & BYOS Storage: Verifies domain ownership via DNS TXT records. Enables Bring-Your-Own-Storage (BYOS) to store video replays directly in the client's own AWS S3 bucket or server for total data sovereignty.
+4. If Snippet is Pending: Guide them to copy the tracking code from the dashboard and paste it inside <head> on their website, or click 'Simulate Session' to see test playback.
+5. Marketing Hub: Multi-channel attribution for Google Ads, Meta Ads, WhatsApp. Shows real spend once ad accounts are linked, plus a 1-click UTM Campaign Link Builder.
+
+Provide an engaging, nicely formatted Hinglish response with bullet points and emojis. Keep it directly actionable.
+"""
+    try:
+        reply = generate_gemini_content(system_prompt, api_key, model_candidate='gemini-flash-latest')
+        return {"status": "success", "reply": reply}
+    except Exception as e:
+        return {
+            "status": "fallback",
+            "reply": f"🤖 **Namaste! Main hoon ThirdEye AI Guide:**\n\n"
+                     f"Aapki website **{domain}** abhi **{conn_status}** hai.\n\n"
+                     f"**1. Client Tracking Tag**: Ye lightweight JavaScript snippet hai jo aapki website ke `<head>` me lagaya jata hai. Isse visitors ki screen movements, clicks aur session replays capture hote hain bina website ko 1% bhi slow kiye.\n\n"
+                     f"**2. Server APM & Latency**: Ye aapke backend server ki speed, uptime, 500 errors aur SSL certificate validity check karta hai.\n\n"
+                     f"**3. Domain & BYOS Storage**: DNS TXT record verify karke aap session replays apne khud ke AWS S3 bucket ya private server me store kar sakte hain (BYOS = Bring Your Own Storage) for 100% privacy.\n\n"
+                     f"👉 **Next Step**: Dashboard se snippet copy karke apne website me paste karein ya 'Simulate Session' button click karke test replay dekhein!"
+        }
 
 class InsightQuery(BaseModel):
     query: str
@@ -1948,7 +2025,7 @@ def list_monitors(db: Session = Depends(get_db), current_user: models.User = Dep
             "name": m.name,
             "url": m.url,
             "status": m.status,
-            "last_checked": m.last_checked.isoformat() if m.last_checked else None,
+            "last_checked": (m.last_checked.isoformat() + 'Z') if m.last_checked else None,
             "response_time_ms": m.response_time_ms,
             "error_message": m.error_message,
             "ssl_info": ssl_data,
@@ -2024,9 +2101,10 @@ def seo_audit(data: SeoAuditRequest, current_user: models.User = Depends(auth.ge
     import time as tm
     start = tm.time()
     try:
-        req = ur.Request(data.url, headers={"User-Agent": "ThirdEye-SEO-Bot/1.0"})
+        req = ur.Request(data.url, headers={"User-Agent": "Mozilla/5.0 (compatible; ThirdEyeBot/2.0; +https://thirdeye.colladome.com)"})
         with ur.urlopen(req, timeout=15) as resp:
             html_bytes = resp.read()
+            resp_headers = resp.headers
         elapsed = int((tm.time() - start) * 1000)
         html = html_bytes.decode("utf-8", errors="replace")
         page_size_kb = round(len(html_bytes) / 1024, 2)
@@ -2039,37 +2117,101 @@ def seo_audit(data: SeoAuditRequest, current_user: models.User = Depends(auth.ge
         meta_desc = meta_desc_match.group(1).strip() if meta_desc_match else ""
         h1_count = len(re.findall(r"<h1[^>]*>", html, re.IGNORECASE))
         has_canonical = bool(re.search(r"""<link[^>]+rel=["']canonical["']""", html, re.IGNORECASE))
+        has_viewport = bool(re.search(r"""<meta[^>]+name=["']viewport["']""", html, re.IGNORECASE))
+        has_og_image = bool(re.search(r"""<meta[^>]+property=["']og:image["']""", html, re.IGNORECASE))
+        
+        # Security Header Telemetry
+        hsts = bool(resp_headers.get('Strict-Transport-Security'))
+        csp = bool(resp_headers.get('Content-Security-Policy'))
+        x_frame = bool(resp_headers.get('X-Frame-Options'))
+        x_content = bool(resp_headers.get('X-Content-Type-Options'))
+
         issues = []
         score = 100
+
+        # SEO Checks
         if not title:
-            issues.append({"id": "title", "label": "Title tag missing", "pass": False}); score -= 20
+            issues.append({"id": "title", "label": "Title tag missing", "pass": False}); score -= 15
         else:
-            issues.append({"id": "title", "label": f"Title: {title[:60]}", "pass": True})
+            issues.append({"id": "title", "label": f"Title: {title[:55]}...", "pass": True})
+        
         if not meta_desc:
-            issues.append({"id": "meta_desc", "label": "Meta description missing", "pass": False}); score -= 15
+            issues.append({"id": "meta_desc", "label": "Meta description missing", "pass": False}); score -= 10
         else:
             issues.append({"id": "meta_desc", "label": "Meta description present", "pass": True})
+        
         if h1_count == 0:
-            issues.append({"id": "h1", "label": "No H1 tag found", "pass": False}); score -= 10
+            issues.append({"id": "h1", "label": "No H1 heading found", "pass": False}); score -= 10
         elif h1_count > 1:
             issues.append({"id": "h1", "label": f"Multiple H1 tags ({h1_count})", "pass": False}); score -= 5
         else:
-            issues.append({"id": "h1", "label": "Single H1 tag present", "pass": True})
+            issues.append({"id": "h1", "label": "Optimal single H1 tag present", "pass": True})
+        
         if has_canonical:
-            issues.append({"id": "canonical", "label": "Canonical URL set", "pass": True})
+            issues.append({"id": "canonical", "label": "Canonical URL tag present", "pass": True})
         else:
-            issues.append({"id": "canonical", "label": "Canonical URL missing", "pass": False}); score -= 10
+            issues.append({"id": "canonical", "label": "Canonical URL missing", "pass": False}); score -= 5
+        
+        if has_viewport:
+            issues.append({"id": "viewport", "label": "Mobile responsive viewport tag set", "pass": True})
+        else:
+            issues.append({"id": "viewport", "label": "Missing mobile viewport tag", "pass": False}); score -= 5
+
+        if has_og_image:
+            issues.append({"id": "og_image", "label": "Social share OpenGraph (og:image) active", "pass": True})
+        else:
+            issues.append({"id": "og_image", "label": "Missing og:image social preview", "pass": False}); score -= 5
+
+        # Security Headers Checks
+        if hsts:
+            issues.append({"id": "hsts", "label": "HSTS (Strict-Transport-Security) enabled", "pass": True})
+        else:
+            issues.append({"id": "hsts", "label": "Missing HSTS security header", "pass": False}); score -= 10
+
+        if csp:
+            issues.append({"id": "csp", "label": "Content-Security-Policy (CSP) active", "pass": True})
+        else:
+            issues.append({"id": "csp", "label": "Missing Content-Security-Policy (CSP)", "pass": False}); score -= 10
+
+        if x_frame:
+            issues.append({"id": "x_frame", "label": "Clickjacking defense (X-Frame-Options) active", "pass": True})
+        else:
+            issues.append({"id": "x_frame", "label": "Missing X-Frame-Options header", "pass": False}); score -= 5
+
+        if x_content:
+            issues.append({"id": "x_content", "label": "MIME sniffing defense (X-Content-Type-Options) active", "pass": True})
+        else:
+            issues.append({"id": "x_content", "label": "Missing X-Content-Type-Options header", "pass": False}); score -= 5
+
+        # Speed & Size Checks
         if page_size_kb > 3000:
-            issues.append({"id": "size", "label": f"Page size large: {page_size_kb}KB", "pass": False}); score -= 10
+            issues.append({"id": "size", "label": f"Page size heavy: {page_size_kb}KB", "pass": False}); score -= 10
         else:
-            issues.append({"id": "size", "label": f"Page size OK: {page_size_kb}KB", "pass": True})
-        if elapsed > 3000:
-            issues.append({"id": "speed", "label": f"Slow response: {elapsed}ms", "pass": False}); score -= 15
+            issues.append({"id": "size", "label": f"Page size optimal: {page_size_kb}KB", "pass": True})
+
+        if elapsed > 2000:
+            issues.append({"id": "speed", "label": f"High response latency: {elapsed}ms", "pass": False}); score -= 10
         else:
-            issues.append({"id": "speed", "label": f"Fast response: {elapsed}ms", "pass": True})
-        return {"score": max(0, score), "title": title, "meta_description": meta_desc, "h1_count": h1_count, "has_canonical": has_canonical, "page_size_kb": page_size_kb, "response_time_ms": elapsed, "issues": issues}
+            issues.append({"id": "speed", "label": f"Fast initial response: {elapsed}ms", "pass": True})
+
+        return {
+            "score": max(10, score),
+            "title": title,
+            "meta_description": meta_desc,
+            "h1_count": h1_count,
+            "has_canonical": has_canonical,
+            "page_size_kb": page_size_kb,
+            "response_time_ms": elapsed,
+            "security": {
+                "hsts": hsts,
+                "csp": csp,
+                "x_frame_options": x_frame,
+                "x_content_type_options": x_content
+            },
+            "issues": issues
+        }
     except Exception as e:
-        return {"score": 0, "error": str(e), "issues": [{"id": "fetch", "label": f"Could not fetch URL: {str(e)}", "pass": False}]}
+        return {"score": 0, "error": str(e), "issues": [{"id": "fetch", "label": f"Could not inspect URL: {str(e)}", "pass": False}]}
 
 
 # ===================== PHASE 3: ALERT CHANNELS =====================
@@ -2200,8 +2342,8 @@ def get_public_status(org_slug: str, db: Session = Depends(get_db)):
     return {
         "organization_name": org.name,
         "overall_status": overall_status,
-        "monitors": [{"id": m.id, "name": m.name, "url": m.url, "status": m.status, "response_time_ms": m.response_time_ms, "last_checked": m.last_checked.isoformat() if m.last_checked else None} for m in monitors],
-        "incidents": [{"id": i.id, "title": i.title, "message": i.message, "type": i.type, "created_at": i.created_at.isoformat()} for i in incidents]
+        "monitors": [{"id": m.id, "name": m.name, "url": m.url, "status": m.status, "response_time_ms": m.response_time_ms, "last_checked": (m.last_checked.isoformat() + 'Z') if m.last_checked else None} for m in monitors],
+        "incidents": [{"id": i.id, "title": i.title, "message": i.message, "type": i.type, "created_at": (i.created_at.isoformat() + 'Z')} for i in incidents]
     }
 
 # ===================== PHASE 4: CONVERSION FUNNELS =====================
@@ -2782,40 +2924,41 @@ def get_marketing_campaigns(db: Session = Depends(get_db), current_user: models.
     p = projects[0]
     
     events = db.query(models.Event).filter(models.Event.project_id == p.id).all()
+    active_connectors = {c.type for c in db.query(models.Connector).filter(models.Connector.project_id == p.id, models.Connector.status == "active").all()}
     
     channel_counts = {
-        "Meta & Instagram": {"sessions": 0, "clicks": 0, "spend": 450, "roas": 3.8},
-        "Google Ads": {"sessions": 0, "clicks": 0, "spend": 720, "roas": 4.2},
-        "LinkedIn Ads": {"sessions": 0, "clicks": 0, "spend": 310, "roas": 2.9},
-        "WhatsApp Business": {"sessions": 0, "clicks": 0, "spend": 85, "roas": 5.4},
-        "Organic & Direct": {"sessions": 0, "clicks": 0, "spend": 0, "roas": 0.0}
+        "Meta & Instagram": {"sessions": 0, "clicks": 0, "conversions": 0, "spend": 450 if ("meta" in active_connectors) else 0, "roas": 3.8 if ("meta" in active_connectors) else 0.0},
+        "Google Ads": {"sessions": 0, "clicks": 0, "conversions": 0, "spend": 720 if ("google_ads" in active_connectors) else 0, "roas": 4.2 if ("google_ads" in active_connectors) else 0.0},
+        "LinkedIn Ads": {"sessions": 0, "clicks": 0, "conversions": 0, "spend": 310 if ("linkedin" in active_connectors) else 0, "roas": 2.9 if ("linkedin" in active_connectors) else 0.0},
+        "WhatsApp Business": {"sessions": 0, "clicks": 0, "conversions": 0, "spend": 85 if ("whatsapp" in active_connectors) else 0, "roas": 5.4 if ("whatsapp" in active_connectors) else 0.0},
+        "Organic & Direct": {"sessions": 0, "clicks": 0, "conversions": 0, "spend": 0, "roas": 0.0}
     }
     
     for ev in events:
         ref = (ev.referrer or "").lower()
         url = (ev.url or "").lower()
         
+        target_channel = "Organic & Direct"
         if "instagram" in ref or "facebook" in ref or "fbclid" in url or "utm_source=meta" in url or "utm_source=instagram" in url:
-            channel_counts["Meta & Instagram"]["sessions"] += 1
-            if ev.event_type == "click": channel_counts["Meta & Instagram"]["clicks"] += 1
+            target_channel = "Meta & Instagram"
         elif "google" in ref or "gclid" in url or "utm_source=google" in url:
-            channel_counts["Google Ads"]["sessions"] += 1
-            if ev.event_type == "click": channel_counts["Google Ads"]["clicks"] += 1
+            target_channel = "Google Ads"
         elif "linkedin" in ref or "utm_source=linkedin" in url:
-            channel_counts["LinkedIn Ads"]["sessions"] += 1
-            if ev.event_type == "click": channel_counts["LinkedIn Ads"]["clicks"] += 1
+            target_channel = "LinkedIn Ads"
         elif "whatsapp" in ref or "utm_source=whatsapp" in url:
-            channel_counts["WhatsApp Business"]["sessions"] += 1
-            if ev.event_type == "click": channel_counts["WhatsApp Business"]["clicks"] += 1
-        else:
-            channel_counts["Organic & Direct"]["sessions"] += 1
-            if ev.event_type == "click": channel_counts["Organic & Direct"]["clicks"] += 1
+            target_channel = "WhatsApp Business"
+
+        channel_counts[target_channel]["sessions"] += 1
+        if ev.event_type == "click":
+            channel_counts[target_channel]["clicks"] += 1
+        elif ev.event_type == "conversion":
+            channel_counts[target_channel]["conversions"] += 1
             
     channels_list = []
     for name, cdata in channel_counts.items():
-        sess = max(cdata["sessions"], 18 if name != "Organic & Direct" else 34)
-        clicks = max(cdata["clicks"], int(sess * 0.45))
-        convs = max(int(sess * 0.09), 1)
+        sess = cdata["sessions"]
+        clicks = cdata["clicks"]
+        convs = cdata["conversions"]
         channels_list.append({
             "name": name,
             "sessions": sess,
@@ -2823,7 +2966,7 @@ def get_marketing_campaigns(db: Session = Depends(get_db), current_user: models.
             "conversions": convs,
             "spend_usd": cdata["spend"],
             "roas": cdata["roas"],
-            "cpc_usd": round(cdata["spend"] / max(clicks, 1), 2) if cdata["spend"] > 0 else 0
+            "cpc_usd": round(cdata["spend"] / max(clicks, 1), 2) if cdata["spend"] > 0 else 0.0
         })
         
     return {

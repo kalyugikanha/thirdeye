@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useMemo, useState } from 'react';
 import rrwebPlayer from 'rrweb-player';
 import 'rrweb-player/dist/style.css';
+import { Zap, Eye, Clock } from 'lucide-react';
 
 interface ReplayPlayerProps {
   events: any[];
@@ -12,12 +13,73 @@ interface ReplayPlayerProps {
   siteUrl?: string;
 }
 
+/**
+ * Compresses dead pauses/idle gaps in rrweb event streams.
+ * If consecutive events have a gap > maxGapMs (default 2500ms),
+ * we compress that gap down to targetGapMs (default 1000ms).
+ * This eliminates player freezing, aligns the scrubber with true active duration,
+ * and fixes the 23-minute timeline issue!
+ */
+export function compressIdlePauses(rawEvents: any[], maxGapMs = 2500, targetGapMs = 1000): {
+  compressedEvents: any[];
+  pausesCompressed: number;
+  timeSavedMs: number;
+  tabSwitches: any[];
+} {
+  if (!rawEvents || rawEvents.length <= 1) {
+    return { compressedEvents: rawEvents || [], pausesCompressed: 0, timeSavedMs: 0, tabSwitches: [] };
+  }
+
+  const sorted = [...rawEvents].sort((a, b) => a.timestamp - b.timestamp);
+  const compressedEvents: any[] = [];
+  const tabSwitches: any[] = [];
+  let timeOffset = 0;
+  let pausesCompressed = 0;
+
+  for (let i = 0; i < sorted.length; i++) {
+    const current = { ...sorted[i] };
+
+    // Check for custom tab visibility events
+    if (
+      (current.type === 5 && current.data && current.data.tag === 'tab_visibility') ||
+      (current.type === 5 && current.data && current.data.state && (current.data.state === 'hidden' || current.data.state === 'visible'))
+    ) {
+      tabSwitches.push(current);
+    }
+
+    if (i > 0) {
+      const prevOrig = sorted[i - 1].timestamp;
+      const currOrig = sorted[i].timestamp;
+      const gap = currOrig - prevOrig;
+      if (gap > maxGapMs) {
+        timeOffset += (gap - targetGapMs);
+        pausesCompressed++;
+      }
+    }
+
+    current.timestamp = current.timestamp - timeOffset;
+    compressedEvents.push(current);
+  }
+
+  return {
+    compressedEvents,
+    pausesCompressed,
+    timeSavedMs: timeOffset,
+    tabSwitches
+  };
+}
+
 export default function ReplayPlayer({ events, width = 850, height = 480, seekTime, siteUrl }: ReplayPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerInstanceRef = useRef<any>(null);
 
+  // Process and compress idle dead pauses
+  const { compressedEvents, pausesCompressed, timeSavedMs, tabSwitches } = useMemo(() => {
+    return compressIdlePauses(events);
+  }, [events]);
+
   useEffect(() => {
-    if (!containerRef.current || !events || events.length === 0) {
+    if (!containerRef.current || !compressedEvents || compressedEvents.length === 0) {
       return;
     }
 
@@ -31,7 +93,7 @@ export default function ReplayPlayer({ events, width = 850, height = 480, seekTi
     }
     if (!targetOrigin) {
       // Find rrweb Meta event (type 4)
-      const metaEv = events.find(e => e.type === 4 && e.data && e.data.href);
+      const metaEv = compressedEvents.find(e => e.type === 4 && e.data && e.data.href);
       if (metaEv && metaEv.data.href) {
         try {
           targetOrigin = new URL(metaEv.data.href).origin;
@@ -46,12 +108,12 @@ export default function ReplayPlayer({ events, width = 850, height = 480, seekTi
       const player = new rrwebPlayer({
         target: containerRef.current,
         props: {
-          events,
+          events: compressedEvents,
           width,
           height,
           autoPlay: true,
           showController: true,
-          skipInactive: true, // Automatically skip long pauses / idle times
+          skipInactive: true, // Automatically skip pauses
           speedOption: [1, 2, 4, 8],
           UNSAFE_replayCanvas: true,
         },
@@ -97,7 +159,7 @@ export default function ReplayPlayer({ events, width = 850, height = 480, seekTi
     } catch (err) {
       console.error('Failed to initialize rrweb-player:', err);
     }
-  }, [events, width, height, siteUrl]);
+  }, [compressedEvents, width, height, siteUrl]);
 
   useEffect(() => {
     if (playerInstanceRef.current && typeof seekTime === 'number') {
@@ -118,9 +180,36 @@ export default function ReplayPlayer({ events, width = 850, height = 480, seekTi
     );
   }
 
+  const timeSavedSec = Math.round(timeSavedMs / 1000);
+
   return (
-    <div className="flex justify-center items-center bg-slate-950 rounded-2xl overflow-hidden p-2 shadow-2xl">
-      <div ref={containerRef} className="rrweb-wrapper" />
+    <div className="flex flex-col items-center w-full">
+      {/* Telemetry Bar above Player */}
+      {(pausesCompressed > 0 || tabSwitches.length > 0) && (
+        <div className="w-full flex items-center justify-between px-3 py-1.5 mb-2 bg-slate-900/90 border border-slate-800 rounded-xl text-[11px] text-slate-300">
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+              <Zap className="w-3.5 h-3.5" />
+              <span>Smart Playback</span>
+            </span>
+            {pausesCompressed > 0 && (
+              <span className="text-slate-400">
+                &bull; {pausesCompressed} dead pauses compacted ({timeSavedSec}s idle time saved)
+              </span>
+            )}
+          </div>
+          {tabSwitches.length > 0 && (
+            <span className="flex items-center gap-1 text-amber-400 font-semibold">
+              <Eye className="w-3.5 h-3.5" />
+              <span>{tabSwitches.length} Tab Switch{tabSwitches.length > 1 ? 'es' : ''}</span>
+            </span>
+          )}
+        </div>
+      )}
+
+      <div className="flex justify-center items-center bg-slate-950 rounded-2xl overflow-hidden p-2 shadow-2xl">
+        <div ref={containerRef} className="rrweb-wrapper" />
+      </div>
     </div>
   );
 }

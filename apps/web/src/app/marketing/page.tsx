@@ -237,9 +237,13 @@ export default function MarketingPage() {
                   </div>
                 </div>
                 <div className="text-2xl font-black text-rose-600">
-                  3.9x Return
+                  {data.total_spend_usd > 0 
+                    ? `${(data.channels.filter(c => c.spend_usd > 0).reduce((a, b) => a + (b.roas || 0), 0) / Math.max(data.channels.filter(c => c.spend_usd > 0).length, 1)).toFixed(1)}x Return` 
+                    : '0.0x Return'}
                 </div>
-                <p className="text-[11px] text-slate-400 mt-1">Ad spend to realized revenue multiplier</p>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  {data.total_spend_usd > 0 ? 'Ad spend to realized revenue multiplier' : 'Connect ad account or UTM links to calculate'}
+                </p>
               </div>
             </div>
 

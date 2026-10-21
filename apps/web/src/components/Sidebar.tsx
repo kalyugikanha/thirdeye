@@ -44,6 +44,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiUrl, API_BASE } from '@/lib/api';
+import AiGuideWidget from '@/components/AiGuideWidget';
 
 interface NavGroup {
   label: string;
@@ -349,7 +350,7 @@ export default function Sidebar() {
           </div>
 
           {/* Navigation Groups */}
-          <div className="space-y-5 overflow-y-auto max-h-[calc(100vh-280px)] pr-1">
+          <div className="space-y-5 overflow-y-auto max-h-[calc(100vh-280px)] pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             {NAV_GROUPS.map((group) => (
               <div key={group.label} className="space-y-1.5">
                 <div className="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -568,6 +569,9 @@ export default function Sidebar() {
           </div>
         </div>
       )}
+
+      {/* Floating AI Robot Guide (Active on all pages) */}
+      <AiGuideWidget domain={domain} isConnected={isConnected} context={pathname} />
     </>
   );
 }

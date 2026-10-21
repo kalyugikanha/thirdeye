@@ -306,7 +306,7 @@ export default function UptimePage() {
                       <div className="text-right hidden sm:block">
                         <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Last Checked</div>
                         <div className="text-xs font-semibold text-slate-600 mt-0.5">
-                          {m.last_checked ? new Date(m.last_checked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Never'}
+                          {m.last_checked ? new Date(m.last_checked.endsWith('Z') || m.last_checked.includes('+') ? m.last_checked : `${m.last_checked}Z`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Never'}
                         </div>
                       </div>
 

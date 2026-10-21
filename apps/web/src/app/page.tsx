@@ -352,15 +352,26 @@ export default function WorkspaceDashboard() {
                 onClick={copySnippet}
                 className="bg-white p-4 rounded-3xl border border-slate-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer flex flex-col justify-between min-h-[140px] group"
               >
-                <div className="w-8 h-8 rounded-2xl bg-rose-50 flex items-center justify-center text-rose-500 mb-2">
-                  <Sparkles className="w-4 h-4" />
+                <div className="flex items-center justify-between mb-2">
+                  <div className="w-8 h-8 rounded-2xl bg-rose-50 flex items-center justify-center text-rose-500">
+                    <Sparkles className="w-4 h-4" />
+                  </div>
+                  {status.is_connected ? (
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                      ● Active
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                      ● Action Needed
+                    </span>
+                  )}
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900 text-xs sm:text-sm leading-snug group-hover:text-rose-600 transition-colors">
                     Client Tracking Tag
                   </h3>
                   <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-                    {copiedSnippet ? 'Copied to clipboard!' : 'Install snippet to record live visitor sessions.'}
+                    {copiedSnippet ? 'Copied to clipboard!' : status.is_connected ? 'Snippet verified! Live sessions being recorded.' : 'Install snippet to record live visitor sessions.'}
                   </p>
                 </div>
                 <div className="flex items-center justify-between pt-2 text-[10px] font-semibold text-rose-600">
@@ -374,8 +385,13 @@ export default function WorkspaceDashboard() {
                 href="/uptime"
                 className="bg-white p-4 rounded-3xl border border-slate-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] hover:shadow-md hover:-translate-y-0.5 transition-all flex flex-col justify-between min-h-[140px] group"
               >
-                <div className="w-8 h-8 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-500 mb-2">
-                  <Server className="w-4 h-4" />
+                <div className="flex items-center justify-between mb-2">
+                  <div className="w-8 h-8 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-500">
+                    <Server className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200">
+                    SLA Monitor
+                  </span>
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900 text-xs sm:text-sm leading-snug group-hover:text-indigo-600 transition-colors">
@@ -396,8 +412,13 @@ export default function WorkspaceDashboard() {
                 href="/onboarding"
                 className="bg-white p-4 rounded-3xl border border-slate-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] hover:shadow-md hover:-translate-y-0.5 transition-all flex flex-col justify-between min-h-[140px] group"
               >
-                <div className="w-8 h-8 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-500 mb-2">
-                  <HardDrive className="w-4 h-4" />
+                <div className="flex items-center justify-between mb-2">
+                  <div className="w-8 h-8 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-500">
+                    <HardDrive className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                    S3 / Private
+                  </span>
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900 text-xs sm:text-sm leading-snug group-hover:text-amber-600 transition-colors">

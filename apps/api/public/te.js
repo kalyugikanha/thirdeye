@@ -126,8 +126,29 @@
   window.addEventListener('touchstart', onUserActiveInput, { passive: true });
   window.addEventListener('mousemove', onUserActiveInput, { passive: true });
 
-  // Tab visibility listener: pause recording when tab is hidden, resume when tab is visible
+  // Tab visibility listener: record tab switch events, pause when hidden, resume when visible
   document.addEventListener('visibilitychange', function() {
+    try {
+      var addEv = (window.rrwebRecord && typeof window.rrwebRecord.addCustomEvent === 'function')
+        ? window.rrwebRecord.addCustomEvent
+        : (window.rrweb && typeof window.rrweb.addCustomEvent === 'function')
+        ? window.rrweb.addCustomEvent
+        : null;
+      var stateDesc = document.hidden ? 'hidden' : 'visible';
+      if (addEv) {
+        addEv('tab_visibility', { state: stateDesc, timestamp: Date.now() });
+      } else if (isRecording) {
+        events.push({
+          type: 5,
+          data: {
+            tag: 'tab_visibility',
+            payload: { state: stateDesc, timestamp: Date.now() }
+          },
+          timestamp: Date.now()
+        });
+      }
+    } catch (e) {}
+
     if (document.hidden) {
       pauseRecording('hidden');
     } else {
