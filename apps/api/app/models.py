@@ -99,15 +99,23 @@ class SessionRecording(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     project = relationship('Project', back_populates='recordings')
-
+
 
 class UptimeMonitor(Base):
     __tablename__ = 'uptime_monitors'
     id = Column(Integer, primary_key=True, index=True)
-    project_id = Column(Integer, ForeignKey('projects.id'))
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
     name = Column(String)
     url = Column(String)
-    status = Column(String, default='pending')
+    status = Column(String, default='pending') # up, down, degraded, pending
+    http_method = Column(String, default='GET')
+    headers = Column(JSON, default=dict)
+    request_body = Column(Text, nullable=True)
+    assertions = Column(JSON, default=list)
+    failure_threshold = Column(Integer, default=2) # consecutive failures before hard alert
+    consecutive_failures = Column(Integer, default=0)
+    is_degraded = Column(Boolean, default=False)
+    last_status = Column(String, nullable=True)
     last_checked = Column(DateTime, nullable=True)
     response_time_ms = Column(Integer, nullable=True)
     error_message = Column(String, nullable=True)
@@ -117,7 +125,7 @@ class UptimeMonitor(Base):
 class Notification(Base):
     __tablename__ = 'notifications'
     id = Column(Integer, primary_key=True, index=True)
-    organization_id = Column(Integer, ForeignKey('organizations.id'))
+    organization_id = Column(Integer, ForeignKey('organizations.id'), index=True)
     title = Column(String)
     message = Column(String)
     type = Column(String, default='info')
@@ -128,7 +136,7 @@ class Notification(Base):
 class AlertChannel(Base):
     __tablename__ = 'alert_channels'
     id = Column(Integer, primary_key=True, index=True)
-    organization_id = Column(Integer, ForeignKey('organizations.id'))
+    organization_id = Column(Integer, ForeignKey('organizations.id'), index=True)
     name = Column(String)
     type = Column(String, default='webhook')
     config = Column(JSON, nullable=True)

@@ -2061,17 +2061,72 @@ class MonitorCreate(BaseModel):
     name: str
     url: str
     project_id: int
+    http_method: Optional[str] = "GET"
+    headers: Optional[dict] = {}
+    request_body: Optional[str] = None
+    assertions: Optional[list] = []
+    failure_threshold: Optional[int] = 2
+
+class MonitorUpdate(BaseModel):
+    name: Optional[str] = None
+    url: Optional[str] = None
+    http_method: Optional[str] = None
+    headers: Optional[dict] = None
+    request_body: Optional[str] = None
+    assertions: Optional[list] = None
+    failure_threshold: Optional[int] = None
 
 @app.post('/api/v1/monitors')
 def create_monitor(data: MonitorCreate, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     user_project_ids = get_user_project_ids(db, current_user)
     if not is_superadmin_user(current_user) and data.project_id not in user_project_ids:
         raise HTTPException(status_code=403, detail="Forbidden: project does not belong to user")
-    monitor = models.UptimeMonitor(project_id=data.project_id, name=data.name, url=data.url)
+    monitor = models.UptimeMonitor(
+        project_id=data.project_id,
+        name=data.name,
+        url=data.url,
+        http_method=data.http_method or 'GET',
+        headers=data.headers or {},
+        request_body=data.request_body,
+        assertions=data.assertions or [],
+        failure_threshold=data.failure_threshold or 2,
+        consecutive_failures=0
+    )
     db.add(monitor)
     db.commit()
     db.refresh(monitor)
     return {"id": monitor.id, "name": monitor.name, "url": monitor.url, "status": monitor.status}
+
+@app.put('/api/v1/monitors/{monitor_id}')
+def update_monitor(monitor_id: int, data: MonitorUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    monitor = db.query(models.UptimeMonitor).filter(models.UptimeMonitor.id == monitor_id).first()
+    if not monitor:
+        raise HTTPException(status_code=404, detail="Monitor not found")
+    user_project_ids = get_user_project_ids(db, current_user)
+    if not is_superadmin_user(current_user) and monitor.project_id not in user_project_ids:
+        raise HTTPException(status_code=403, detail="Forbidden: monitor does not belong to user")
+    
+    if data.name: monitor.name = data.name
+    if data.url: monitor.url = data.url
+    if data.http_method: monitor.http_method = data.http_method
+    if data.headers is not None: monitor.headers = data.headers
+    if data.request_body is not None: monitor.request_body = data.request_body
+    if data.assertions is not None: monitor.assertions = data.assertions
+    if data.failure_threshold is not None: monitor.failure_threshold = data.failure_threshold
+    db.commit()
+    return {"status": "updated", "id": monitor.id}
+
+@app.delete('/api/v1/monitors/{monitor_id}')
+def delete_monitor(monitor_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    monitor = db.query(models.UptimeMonitor).filter(models.UptimeMonitor.id == monitor_id).first()
+    if not monitor:
+        raise HTTPException(status_code=404, detail="Monitor not found")
+    user_project_ids = get_user_project_ids(db, current_user)
+    if not is_superadmin_user(current_user) and monitor.project_id not in user_project_ids:
+        raise HTTPException(status_code=403, detail="Forbidden: monitor does not belong to user")
+    db.delete(monitor)
+    db.commit()
+    return {"status": "deleted"}
 
 def get_ssl_details(url: str):
     import ssl
@@ -2125,6 +2180,13 @@ def list_monitors(db: Session = Depends(get_db), current_user: models.User = Dep
             "name": m.name,
             "url": m.url,
             "status": m.status,
+            "http_method": m.http_method or 'GET',
+            "headers": m.headers or {},
+            "request_body": m.request_body,
+            "assertions": m.assertions or [],
+            "failure_threshold": m.failure_threshold or 2,
+            "consecutive_failures": m.consecutive_failures or 0,
+            "is_degraded": bool(m.is_degraded),
             "last_checked": (m.last_checked.isoformat() + 'Z') if m.last_checked else None,
             "response_time_ms": m.response_time_ms,
             "error_message": m.error_message,
@@ -2136,42 +2198,161 @@ def list_monitors(db: Session = Depends(get_db), current_user: models.User = Dep
 @app.post('/api/v1/monitors/{monitor_id}/check')
 def check_monitor(monitor_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     import urllib.request as ur
+    import urllib.error as ue
     import time as tm
+    import json
     from datetime import datetime as dt2
+    from app import alerts
+
     monitor = db.query(models.UptimeMonitor).filter(models.UptimeMonitor.id == monitor_id).first()
     if not monitor:
         raise HTTPException(status_code=404, detail="Monitor not found")
     user_project_ids = get_user_project_ids(db, current_user)
     if not is_superadmin_user(current_user) and monitor.project_id not in user_project_ids:
         raise HTTPException(status_code=403, detail="Forbidden: monitor does not belong to user")
+
+    project = db.query(models.Project).filter(models.Project.id == monitor.project_id).first()
+    org_id = project.organization_id if project else current_user.organization_id
+
     start = tm.time()
+    method = (monitor.http_method or "GET").upper()
+    req_headers = {"User-Agent": "ThirdEye-Checkly-Grade-Monitor/2.0"}
+    if monitor.headers and isinstance(monitor.headers, dict):
+        req_headers.update(monitor.headers)
+
+    req_data = None
+    if monitor.request_body and method in ["POST", "PUT", "PATCH"]:
+        req_data = monitor.request_body.encode('utf-8')
+        if "Content-Type" not in req_headers:
+            req_headers["Content-Type"] = "application/json"
+
+    status_code = None
+    response_body = ""
+    error_detail = None
+    assertion_results = []
+    all_assertions_passed = True
+
     try:
-        req = ur.Request(monitor.url, headers={"User-Agent": "ThirdEye-Uptime-Monitor/2.0"})
-        with ur.urlopen(req, timeout=10) as resp:
-            resp.read()
-        elapsed = int((tm.time() - start) * 1000)
-        monitor.status = "up"
-        monitor.response_time_ms = elapsed
-        monitor.error_message = None
+        req = ur.Request(monitor.url, data=req_data, headers=req_headers, method=method)
+        with ur.urlopen(req, timeout=12) as resp:
+            status_code = resp.status
+            body_bytes = resp.read()
+            response_body = body_bytes.decode('utf-8', errors='ignore')
+    except ue.HTTPError as e:
+        status_code = e.code
+        try:
+            response_body = e.read().decode('utf-8', errors='ignore')
+        except Exception:
+            response_body = ""
     except Exception as e:
-        elapsed = int((tm.time() - start) * 1000)
-        monitor.status = "down"
-        monitor.response_time_ms = elapsed
-        monitor.error_message = str(e)
-        notif = models.Notification(organization_id=current_user.organization_id, title=f"Monitor DOWN: {monitor.name}", message=f"{monitor.url} is unreachable: {str(e)}", type="error")
-        db.add(notif)
+        error_detail = str(e)
+
+    elapsed = int((tm.time() - start) * 1000)
+
+    # Evaluate Assertions (Checkly Standard)
+    user_assertions = monitor.assertions if (monitor.assertions and isinstance(monitor.assertions, list)) else []
+
+    if not user_assertions:
+        # Default assertion: HTTP status < 400
+        if error_detail or not status_code or status_code >= 400:
+            all_assertions_passed = False
+            assertion_results.append({"type": "status_code", "passed": False, "expected": 200, "actual": status_code or "Connection Error"})
+        else:
+            assertion_results.append({"type": "status_code", "passed": True, "expected": 200, "actual": status_code})
+    else:
+        for a in user_assertions:
+            a_type = a.get("type", "status_code")
+            operator = a.get("operator", "equals")
+            target = a.get("target")
+
+            passed = False
+            actual_val = None
+
+            if a_type == "status_code":
+                actual_val = status_code
+                passed = (status_code == int(target)) if (status_code and target is not None) else False
+            elif a_type == "response_time":
+                actual_val = elapsed
+                max_ms = int(target) if target else 2000
+                passed = elapsed <= max_ms
+            elif a_type == "body_contains":
+                actual_val = f"{len(response_body)} bytes"
+                passed = bool(target and str(target) in response_body)
+            elif a_type == "body_json":
+                prop = a.get("property")
+                try:
+                    parsed_json = json.loads(response_body)
+                    actual_val = str(parsed_json.get(prop))
+                    passed = (actual_val == str(target))
+                except Exception:
+                    actual_val = "Invalid JSON"
+                    passed = False
+            else:
+                passed = (status_code == 200)
+
+            if not passed:
+                all_assertions_passed = False
+            assertion_results.append({
+                "type": a_type,
+                "passed": passed,
+                "target": target,
+                "actual": actual_val
+            })
+
+    # State Machine & Flapping Protection
+    prev_status = monitor.status
+    monitor.response_time_ms = elapsed
     monitor.last_checked = dt2.utcnow()
+
+    if all_assertions_passed and not error_detail:
+        # Check passed!
+        if prev_status == "down":
+            # RECOVERY ALERT (Checkly Standard)
+            alerts.dispatch_alert(
+                db=db,
+                organization_id=org_id,
+                title=f"🟢 RECOVERED: {monitor.name}",
+                message=f"Monitor '{monitor.name}' ({monitor.url}) has recovered and is now passing all checks. Response time: {elapsed}ms.",
+                alert_type="success",
+                metadata={"monitor_id": monitor.id, "latency_ms": elapsed, "url": monitor.url}
+            )
+
+        monitor.status = "up"
+        monitor.consecutive_failures = 0
+        monitor.error_message = None
+        monitor.is_degraded = (elapsed > 1500)
+    else:
+        # Failure detected
+        monitor.consecutive_failures = (monitor.consecutive_failures or 0) + 1
+        threshold = monitor.failure_threshold or 2
+        fail_reason = error_detail or f"HTTP {status_code} - Assertion failed: {[r for r in assertion_results if not r.get('passed')]}"
+        monitor.error_message = fail_reason[:250]
+
+        if monitor.consecutive_failures >= threshold:
+            # Reached threshold: HARD DOWN ALERT!
+            if prev_status != "down":
+                alerts.dispatch_alert(
+                    db=db,
+                    organization_id=org_id,
+                    title=f"🔴 Monitor DOWN: {monitor.name}",
+                    message=f"Monitor '{monitor.name}' ({monitor.url}) failed {monitor.consecutive_failures} consecutive checks. Error: {monitor.error_message}",
+                    alert_type="error",
+                    metadata={"monitor_id": monitor.id, "consecutive_failures": monitor.consecutive_failures, "error": monitor.error_message}
+                )
+            monitor.status = "down"
+        else:
+            # Flapping protection: degraded, waiting for next consecutive run
+            monitor.status = "degraded"
+
     db.commit()
-    if monitor.status == "down":
-        enterprise.dispatch_incident_webhook(
-            db, monitor.project_id, f"Monitor DOWN: {monitor.name}",
-            f"{monitor.url} is unreachable: {monitor.error_message}", "uptime_downtime",
-            {"URL": monitor.url, "Response time": f"{monitor.response_time_ms} ms"},
-            incident_key=f"uptime_downtime:monitor:{monitor.id}")
+
     ssl_data = get_ssl_details(monitor.url) if monitor.url and monitor.url.startswith('https') else {"valid": False, "days_remaining": 0, "issuer": "None"}
     return {
         "status": monitor.status,
         "response_time_ms": monitor.response_time_ms,
+        "consecutive_failures": monitor.consecutive_failures,
+        "assertions": assertion_results,
+        "all_passed": all_assertions_passed,
         "ssl_info": ssl_data,
         "latency_history": generate_latency_sparkline(monitor.response_time_ms)
     }
