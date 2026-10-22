@@ -44,7 +44,7 @@ export default function LoginPage() {
       if (email === 'admin@thirdeye.io' || data.user?.role === 'SUPERADMIN') {
         router.push('/superadmin');
       } else {
-        // Standard client user (e.g. scan.pe.in@gmail.com with GrowInsight) goes directly to workspace dashboard
+        // Standard client user goes directly to workspace dashboard
         router.push('/');
       }
     } catch (err: any) {
@@ -52,12 +52,6 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const fillClientDemo = () => {
-    setEmail('scan.pe.in@gmail.com');
-    setPassword('AKAsh@123');
-    setError('');
   };
 
   return (
