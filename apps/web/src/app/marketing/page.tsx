@@ -154,6 +154,12 @@ export default function MarketingPage() {
         fetch(apiUrl('/api/v1/analytics/search-queries'), { headers: { Authorization: `Bearer ${token}` } })
       ]);
 
+      if (campRes.status === 401 || gscRes.status === 401 || ga4Res.status === 401) {
+        localStorage.removeItem('te_token');
+        router.push('/login');
+        return;
+      }
+
       if (campRes.ok) {
         const json = await campRes.json();
         setData(json);
@@ -213,6 +219,12 @@ export default function MarketingPage() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ account_email: data.domain ? `admin@${data.domain}` : undefined })
       });
+      if (res.status === 401) {
+        alert('Your session has expired. Please sign in again.');
+        localStorage.removeItem('te_token');
+        router.push('/login');
+        return;
+      }
       if (res.ok) {
         localStorage.setItem('te_mkt_gsc', 'true');
         localStorage.setItem('te_mkt_ga4', 'true');
@@ -233,10 +245,16 @@ export default function MarketingPage() {
     if (!confirm(`Disconnect ${platformId.toUpperCase()} connector? Active telemetry from this provider will be paused.`)) return;
     const token = localStorage.getItem('te_token');
     try {
-      await fetch(apiUrl(`/api/v1/connectors/${platformId}/disconnect`), {
+      const res = await fetch(apiUrl(`/api/v1/connectors/${platformId}/disconnect`), {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
+      if (res.status === 401) {
+        alert('Your session has expired. Please sign in again.');
+        localStorage.removeItem('te_token');
+        router.push('/login');
+        return;
+      }
       localStorage.removeItem(`te_mkt_${platformId}`);
       setConnected(prev => ({ ...prev, [platformId]: false }));
       if (platformId === 'ga4') {
@@ -283,6 +301,13 @@ export default function MarketingPage() {
         },
         body: JSON.stringify(body)
       });
+
+      if (res.status === 401) {
+        alert('Your session has expired. Please sign in again.');
+        localStorage.removeItem('te_token');
+        router.push('/login');
+        return;
+      }
 
       if (res.ok) {
         localStorage.setItem(`te_mkt_${activePlatform.id}`, 'true');

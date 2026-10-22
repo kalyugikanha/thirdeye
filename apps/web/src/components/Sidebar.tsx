@@ -154,8 +154,16 @@ export default function Sidebar() {
       fetch(apiUrl(`/api/v1/projects/status${q}`), {
         headers: { Authorization: `Bearer ${token}` }
       })
-        .then((res) => res.json())
+        .then((res) => {
+          if (res.status === 401) {
+            localStorage.removeItem('te_token');
+            router.push('/login');
+            return null;
+          }
+          return res.json();
+        })
         .then((data) => {
+          if (!data) return;
           if (data.domain) setDomain(data.domain);
           if (data.api_key) setApiKey(data.api_key);
           if (data.project_id) setActiveProjectId(data.project_id);
