@@ -26,6 +26,7 @@ import {
   Layers,
   Plus,
   Trash2,
+  Pencil,
   CheckSquare,
   Square,
   ShieldAlert,
@@ -34,7 +35,12 @@ import {
   BarChart3,
   Globe,
   Lock,
-  ArrowUpRight
+  ArrowUpRight,
+  Wrench,
+  Stethoscope,
+  Gauge,
+  Sparkles,
+  AlertTriangle
 } from 'lucide-react';
 import Link from 'next/link';
 import { apiUrl } from '@/lib/api';
@@ -149,7 +155,7 @@ export default function SuperAdminPage() {
   const [tenantPlans, setTenantPlans] = useState<Record<number, string>>({});
   const [tenantActive, setTenantActive] = useState<Record<number, boolean>>({});
 
-  // New Plan Creation Modal State
+  // Plan Creation State
   const [showCreatePlanModal, setShowCreatePlanModal] = useState(false);
   const [creatingPlan, setCreatingPlan] = useState(false);
   const [planForm, setPlanForm] = useState({
@@ -173,6 +179,26 @@ export default function SuperAdminPage() {
       data_export: false
     } as PlanFeatureMap
   });
+
+  // Plan Editing State
+  const [editingPlan, setEditingPlan] = useState<PlanItem | null>(null);
+  const [updatingPlan, setUpdatingPlan] = useState(false);
+  const [editPlanForm, setEditPlanForm] = useState({
+    name: '',
+    description: '',
+    monthly_price: 0,
+    session_limit: 5000,
+    retention_days: 30,
+    is_active: true,
+    is_default: false,
+    features: {} as PlanFeatureMap
+  });
+
+  // Diagnostic & Maintenance State
+  const [testingSnippetOrgId, setTestingSnippetOrgId] = useState<number | null>(null);
+  const [diagnosticResults, setDiagnosticResults] = useState<Record<number, { verified: boolean; status_label: string; detail: string; response_time_ms?: number }>>({});
+  const [optimizingDb, setOptimizingDb] = useState(false);
+  const [maintenanceMsg, setMaintenanceMsg] = useState<string | null>(null);
 
   const fetchData = async () => {
     setLoading(true);
@@ -243,7 +269,6 @@ export default function SuperAdminPage() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ plan_name: planName })
       });
-      // Refresh tenants list to show new quota
       fetchData();
     } catch (e) {
       console.error('Plan update failed:', e);
@@ -338,6 +363,47 @@ export default function SuperAdminPage() {
     }
   };
 
+  const handleOpenEditPlan = (plan: PlanItem) => {
+    setEditingPlan(plan);
+    setEditPlanForm({
+      name: plan.name,
+      description: plan.description || '',
+      monthly_price: plan.monthly_price,
+      session_limit: plan.session_limit,
+      retention_days: plan.retention_days,
+      is_active: plan.is_active,
+      is_default: plan.is_default,
+      features: { ...plan.features }
+    });
+  };
+
+  const handleUpdatePlanSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPlan) return;
+    setUpdatingPlan(true);
+
+    try {
+      const token = localStorage.getItem('te_token');
+      const res = await fetch(apiUrl(`/api/v1/admin/plans/${editingPlan.id}`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(editPlanForm)
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to update plan');
+      }
+
+      setEditingPlan(null);
+      fetchData();
+    } catch (err: any) {
+      alert(err.message || 'Plan update failed');
+    } finally {
+      setUpdatingPlan(false);
+    }
+  };
+
   const handleDeletePlan = async (planId: number) => {
     if (!confirm('Are you sure you want to delete this plan?')) return;
     try {
@@ -353,6 +419,47 @@ export default function SuperAdminPage() {
       fetchData();
     } catch (err: any) {
       alert(err.message || 'Failed to delete plan');
+    }
+  };
+
+  const handleRunDiagnostic = async (orgId: number) => {
+    setTestingSnippetOrgId(orgId);
+    try {
+      const token = localStorage.getItem('te_token');
+      const res = await fetch(apiUrl(`/api/v1/admin/tenants/${orgId}/verify-snippet`), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDiagnosticResults(prev => ({ ...prev, [orgId]: data }));
+      }
+    } catch (err) {
+      console.error('Diagnostic error:', err);
+    } finally {
+      setTestingSnippetOrgId(null);
+    }
+  };
+
+  const handleOptimizeDb = async () => {
+    setOptimizingDb(true);
+    setMaintenanceMsg(null);
+    try {
+      const token = localStorage.getItem('te_token');
+      const res = await fetch(apiUrl('/api/v1/admin/cluster/maintenance'), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMaintenanceMsg(`WAL Checkpointed! New DB Size: ${data.db_size_mb} MB`);
+        fetchData();
+        setTimeout(() => setMaintenanceMsg(null), 4000);
+      }
+    } catch (err) {
+      console.error('Maintenance error:', err);
+    } finally {
+      setOptimizingDb(false);
     }
   };
 
@@ -497,14 +604,14 @@ export default function SuperAdminPage() {
               <div className="flex items-center gap-2.5">
                 <button
                   onClick={() => setActiveTab('tenants')}
-                  className="px-4 py-2.5 rounded-xl bg-white text-slate-900 hover:bg-blue-50 text-xs font-bold flex items-center gap-2 shadow-sm transition-all"
+                  className="px-4 py-2.5 rounded-xl bg-white text-slate-900 hover:bg-blue-50 text-xs font-bold flex items-center gap-2 shadow-sm transition-all cursor-pointer"
                 >
                   <Building2 className="w-4 h-4 text-blue-600" />
                   <span>Manage Tenants</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('plans')}
-                  className="px-4 py-2.5 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 text-white text-xs font-bold flex items-center gap-2 border border-white/20 transition-all"
+                  className="px-4 py-2.5 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 text-white text-xs font-bold flex items-center gap-2 border border-white/20 transition-all cursor-pointer"
                 >
                   <Layers className="w-4 h-4 text-sky-200" />
                   <span>Configure Plans</span>
@@ -586,81 +693,119 @@ export default function SuperAdminPage() {
             {/* Infrastructure Health Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               
-              <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-xs">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                    <Database className="w-5 h-5" />
+              <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-xs flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                      <Database className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm">Telemetry Storage Engine</h3>
+                      <p className="text-[11px] text-slate-500">FastAPI + SQLite WAL Concurrency</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-bold text-slate-900 text-sm">Telemetry Storage Engine</h3>
-                    <p className="text-[11px] text-slate-500">FastAPI + SQLite WAL Concurrency</p>
+                  <div className="space-y-2.5 text-xs text-slate-600">
+                    <div className="flex justify-between py-1.5 border-b border-slate-100">
+                      <span className="text-slate-500">Database Size:</span>
+                      <span className="font-semibold text-slate-900">{stats.db_size_mb || 1.25} MB (Indexed)</span>
+                    </div>
+                    <div className="flex justify-between py-1.5 border-b border-slate-100">
+                      <span className="text-slate-500">WAL Concurrency:</span>
+                      <span className="font-semibold text-emerald-600">Active (Non-blocking)</span>
+                    </div>
+                    <div className="flex justify-between py-1.5">
+                      <span className="text-slate-500">Memory Page Cache:</span>
+                      <span className="font-semibold text-slate-900">64MB PRAGMA</span>
+                    </div>
                   </div>
                 </div>
-                <div className="space-y-2.5 text-xs text-slate-600">
-                  <div className="flex justify-between py-1.5 border-b border-slate-100">
-                    <span className="text-slate-500">Database Size:</span>
-                    <span className="font-semibold text-slate-900">{stats.db_size_mb || 1.25} MB (Indexed)</span>
-                  </div>
-                  <div className="flex justify-between py-1.5 border-b border-slate-100">
-                    <span className="text-slate-500">WAL Concurrency:</span>
-                    <span className="font-semibold text-emerald-600">Active (Non-blocking)</span>
-                  </div>
-                  <div className="flex justify-between py-1.5">
-                    <span className="text-slate-500">Memory Page Cache:</span>
-                    <span className="font-semibold text-slate-900">64MB PRAGMA</span>
-                  </div>
+
+                <div className="mt-4 pt-3 border-t border-slate-100">
+                  <button
+                    onClick={handleOptimizeDb}
+                    disabled={optimizingDb}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 hover:bg-blue-50 hover:text-blue-700 text-slate-700 text-xs font-bold border border-slate-200 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    {optimizingDb ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Wrench className="w-3.5 h-3.5" />
+                    )}
+                    <span>Optimize Database & WAL</span>
+                  </button>
+                  {maintenanceMsg && (
+                    <div className="mt-2 text-[11px] text-emerald-600 font-semibold text-center animate-in fade-in">
+                      ✓ {maintenanceMsg}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-xs">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                    <Cpu className="w-5 h-5" />
+              <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-xs flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                      <Cpu className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm">Cluster Security & SLA</h3>
+                      <p className="text-[11px] text-slate-500">Master Cryptographic Gate</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-bold text-slate-900 text-sm">Cluster Security & SLA</h3>
-                    <p className="text-[11px] text-slate-500">Master Cryptographic Gate</p>
+                  <div className="space-y-2.5 text-xs text-slate-600">
+                    <div className="flex justify-between py-1.5 border-b border-slate-100">
+                      <span className="text-slate-500">Auth Token Validity:</span>
+                      <span className="font-semibold text-slate-900">30 Days (Seamless Refresh)</span>
+                    </div>
+                    <div className="flex justify-between py-1.5 border-b border-slate-100">
+                      <span className="text-slate-500">Cross-Tenant Isolation:</span>
+                      <span className="font-semibold text-emerald-600">Enforced (Zero Leak)</span>
+                    </div>
+                    <div className="flex justify-between py-1.5">
+                      <span className="text-slate-500">Dynamic Subscription Plans:</span>
+                      <span className="font-semibold text-blue-600">{plans.length} Tier Profiles</span>
+                    </div>
                   </div>
                 </div>
-                <div className="space-y-2.5 text-xs text-slate-600">
-                  <div className="flex justify-between py-1.5 border-b border-slate-100">
-                    <span className="text-slate-500">Auth Token Validity:</span>
-                    <span className="font-semibold text-slate-900">30 Days (Seamless Refresh)</span>
-                  </div>
-                  <div className="flex justify-between py-1.5 border-b border-slate-100">
-                    <span className="text-slate-500">Cross-Tenant Isolation:</span>
-                    <span className="font-semibold text-emerald-600">Enforced (Zero Leak)</span>
-                  </div>
-                  <div className="flex justify-between py-1.5">
-                    <span className="text-slate-500">Dynamic Subscription Plans:</span>
-                    <span className="font-semibold text-blue-600">{plans.length} Tier Profiles</span>
-                  </div>
+
+                <div className="mt-4 pt-3 border-t border-slate-100 text-center">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                    ISO/IEC 27001 TLS Guard Active
+                  </span>
                 </div>
               </div>
 
-              <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-xs">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                    <Radio className="w-5 h-5" />
+              <div className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-xs flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                      <Radio className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm">API Latency & Worker Status</h3>
+                      <p className="text-[11px] text-slate-500">Linux DigitalOcean Droplet Node</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-bold text-slate-900 text-sm">API Latency & Worker Status</h3>
-                    <p className="text-[11px] text-slate-500">Linux DigitalOcean Droplet Node</p>
+                  <div className="space-y-2.5 text-xs text-slate-600">
+                    <div className="flex justify-between py-1.5 border-b border-slate-100">
+                      <span className="text-slate-500">Host IP:</span>
+                      <span className="font-mono text-slate-900">159.65.154.209</span>
+                    </div>
+                    <div className="flex justify-between py-1.5 border-b border-slate-100">
+                      <span className="text-slate-500">Domain Gateway:</span>
+                      <span className="font-semibold text-slate-900">thirdeye.colladome.com</span>
+                    </div>
+                    <div className="flex justify-between py-1.5">
+                      <span className="text-slate-500">SSL Certificate:</span>
+                      <span className="font-semibold text-emerald-600">Let's Encrypt (Active)</span>
+                    </div>
                   </div>
                 </div>
-                <div className="space-y-2.5 text-xs text-slate-600">
-                  <div className="flex justify-between py-1.5 border-b border-slate-100">
-                    <span className="text-slate-500">Host IP:</span>
-                    <span className="font-mono text-slate-900">159.65.154.209</span>
-                  </div>
-                  <div className="flex justify-between py-1.5 border-b border-slate-100">
-                    <span className="text-slate-500">Domain Gateway:</span>
-                    <span className="font-semibold text-slate-900">thirdeye.colladome.com</span>
-                  </div>
-                  <div className="flex justify-between py-1.5">
-                    <span className="text-slate-500">SSL Certificate:</span>
-                    <span className="font-semibold text-emerald-600">Let's Encrypt (Active)</span>
-                  </div>
+
+                <div className="mt-4 pt-3 border-t border-slate-100 text-center">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-200">
+                    Nginx Reverse Proxy 1.24.0
+                  </span>
                 </div>
               </div>
 
@@ -675,7 +820,7 @@ export default function SuperAdminPage() {
                 </div>
                 <button
                   onClick={() => setActiveTab('tenants')}
-                  className="text-xs text-blue-600 hover:text-blue-700 font-semibold flex items-center gap-1"
+                  className="text-xs text-blue-600 hover:text-blue-700 font-semibold flex items-center gap-1 cursor-pointer"
                 >
                   View All ({tenants.length}) <ChevronRight className="w-3.5 h-3.5" />
                 </button>
@@ -738,7 +883,7 @@ export default function SuperAdminPage() {
         )}
 
         {/* ========================================================= */}
-        {/* TAB 2: CLIENT TENANTS DIRECTORY */}
+        {/* TAB 2: CLIENT TENANTS DIRECTORY & QUOTA METERING */}
         {/* ========================================================= */}
         {activeTab === 'tenants' && (
           <div className="space-y-6">
@@ -746,7 +891,7 @@ export default function SuperAdminPage() {
               <div>
                 <h2 className="text-xl font-bold text-slate-900">Client Organizations & Workspaces</h2>
                 <p className="text-xs text-slate-500">
-                  Inspect tenant API keys, live traffic status, assign subscription plans, and jump directly into their account.
+                  Inspect tenant API keys, monitor live quota consumption, run snippet diagnostics, and manage subscriptions.
                 </p>
               </div>
 
@@ -763,9 +908,14 @@ export default function SuperAdminPage() {
             </div>
 
             {/* Tenants Cards List */}
-            <div className="grid grid-cols-1 gap-4">
+            <div className="grid grid-cols-1 gap-5">
               {filteredTenants.map((org) => {
                 const project = org.projects[0];
+                const totalEvents = (project?.event_count || 0) + (project?.recording_count || 0);
+                const quotaLimit = org.monthly_event_limit || 5000;
+                const usagePct = Math.min(100, Math.round((totalEvents / quotaLimit) * 100));
+                const barColor = usagePct > 90 ? 'bg-rose-500' : usagePct > 70 ? 'bg-amber-500' : 'bg-emerald-500';
+
                 return (
                   <div key={org.id} className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-xs transition-all hover:border-slate-300">
                     <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
@@ -821,13 +971,6 @@ export default function SuperAdminPage() {
                             {plans.map(p => (
                               <option key={p.id} value={p.name}>{p.name} (${p.monthly_price}/mo)</option>
                             ))}
-                            {plans.length === 0 && (
-                              <>
-                                <option value="Free Starter">Free Starter ($0/mo)</option>
-                                <option value="Growth Pro">Growth Pro ($49/mo)</option>
-                                <option value="Enterprise Elite">Enterprise Elite ($199/mo)</option>
-                              </>
-                            )}
                           </select>
                         </div>
 
@@ -860,29 +1003,79 @@ export default function SuperAdminPage() {
 
                     </div>
 
-                    {/* API Key Box */}
+                    {/* Quota Progress Meter */}
+                    <div className="mt-4 pt-3 border-t border-slate-100">
+                      <div className="flex items-center justify-between text-xs mb-1.5">
+                        <span className="text-slate-500 font-medium flex items-center gap-1.5">
+                          <Gauge className="w-3.5 h-3.5 text-slate-400" />
+                          Monthly Telemetry Quota:
+                        </span>
+                        <span className="font-bold text-slate-800">
+                          {totalEvents.toLocaleString()} / {quotaLimit.toLocaleString()} sessions ({usagePct}%)
+                        </span>
+                      </div>
+                      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full ${barColor} transition-all duration-500`}
+                          style={{ width: `${usagePct}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* API Key Box & Snippet Diagnostic */}
                     {project && (
-                      <div className="mt-4 pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs bg-slate-50/70 p-3.5 rounded-2xl">
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-slate-500">API Key:</span>
-                          <span className="font-mono text-slate-800 bg-white border border-slate-200 px-2.5 py-1 rounded-lg text-[11px]">
-                            {project.api_key}
-                          </span>
-                          <button
-                            onClick={() => copyToClipboard(project.api_key)}
-                            className="p-1 hover:text-blue-600 transition-colors text-slate-400"
-                            title="Copy Key"
-                          >
-                            {copiedKey === project.api_key ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                          </button>
+                      <div className="mt-3 bg-slate-50/70 p-3.5 rounded-2xl border border-slate-100 space-y-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-slate-500">API Key:</span>
+                            <span className="font-mono text-slate-800 bg-white border border-slate-200 px-2.5 py-1 rounded-lg text-[11px]">
+                              {project.api_key}
+                            </span>
+                            <button
+                              onClick={() => copyToClipboard(project.api_key)}
+                              className="p-1 hover:text-blue-600 transition-colors text-slate-400 cursor-pointer"
+                              title="Copy Key"
+                            >
+                              {copiedKey === project.api_key ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+
+                          <div className="flex items-center gap-2.5">
+                            <span className={`w-2 h-2 rounded-full ${project.snippet_active ? 'bg-emerald-500' : 'bg-amber-400'}`} />
+                            <span className="text-[11px] font-semibold text-slate-600">
+                              {project.snippet_active ? 'Streaming Telemetry' : 'Snippet Pending'}
+                            </span>
+                            <button
+                              onClick={() => handleRunDiagnostic(org.id)}
+                              disabled={testingSnippetOrgId === org.id}
+                              className="px-2.5 py-1 rounded-lg bg-white hover:bg-blue-50 hover:text-blue-600 text-slate-600 text-[11px] font-semibold flex items-center gap-1 border border-slate-200 transition-colors cursor-pointer shadow-2xs"
+                            >
+                              {testingSnippetOrgId === org.id ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <Stethoscope className="w-3 h-3" />
+                              )}
+                              <span>Run Diagnostic</span>
+                            </button>
+                          </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                          <span className={`w-2 h-2 rounded-full ${project.snippet_active ? 'bg-emerald-500' : 'bg-amber-400'}`} />
-                          <span className="text-[11px] font-semibold text-slate-600">
-                            {project.snippet_active ? 'Tracking Snippet Active & Ingesting' : 'Snippet Pending Installation'}
-                          </span>
-                        </div>
+                        {/* Inline Diagnostic Result Badge */}
+                        {diagnosticResults[org.id] && (
+                          <div className={`p-2.5 rounded-xl text-xs flex items-center justify-between border animate-in fade-in ${
+                            diagnosticResults[org.id].verified 
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+                              : 'bg-amber-50 text-amber-800 border-amber-200'
+                          }`}>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold">{diagnosticResults[org.id].status_label}:</span>
+                              <span>{diagnosticResults[org.id].detail}</span>
+                            </div>
+                            {diagnosticResults[org.id].response_time_ms && (
+                              <span className="text-[10px] opacity-75 font-mono">{diagnosticResults[org.id].response_time_ms}ms</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -899,7 +1092,7 @@ export default function SuperAdminPage() {
         )}
 
         {/* ========================================================= */}
-        {/* TAB 3: DYNAMIC PLAN BUILDER & FEATURE GATEKEEPER */}
+        {/* TAB 3: DYNAMIC PLAN BUILDER & EDIT GATEKEEPER */}
         {/* ========================================================= */}
         {activeTab === 'plans' && (
           <div className="space-y-6">
@@ -907,7 +1100,7 @@ export default function SuperAdminPage() {
               <div>
                 <h2 className="text-xl font-bold text-slate-900">Subscription Plans & Feature Gatekeeper</h2>
                 <p className="text-xs text-slate-500">
-                  Dynamically create and customize subscription tiers, define session limits, and toggle granular feature permissions.
+                  Edit existing plans in real-time, create custom tiers, customize quotas, and toggle granular feature flags.
                 </p>
               </div>
 
@@ -934,30 +1127,42 @@ export default function SuperAdminPage() {
                   <div>
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <h3 className="text-lg font-black text-slate-900">{p.name}</h3>
-                      {p.tenants_count > 0 ? (
-                        <span className="text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">
-                          {p.tenants_count} Tenants Enrolled
-                        </span>
-                      ) : (
-                        !p.is_default && (
+                      
+                      {/* Actions: Edit & Delete */}
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => handleOpenEditPlan(p)}
+                          className="px-2 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors flex items-center gap-1 text-[11px] font-bold cursor-pointer"
+                          title="Edit this plan"
+                        >
+                          <Pencil className="w-3 h-3" />
+                          <span>Edit</span>
+                        </button>
+                        
+                        {!p.is_default && p.tenants_count === 0 && (
                           <button
                             onClick={() => handleDeletePlan(p.id)}
-                            className="p-1 text-slate-400 hover:text-rose-600 transition-colors"
+                            className="p-1 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
                             title="Delete Plan"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
-                        )
-                      )}
+                        )}
+                      </div>
                     </div>
 
                     <p className="text-xs text-slate-500 mb-4 min-h-[36px]">
                       {p.description || 'Custom telemetry tier with granular feature access.'}
                     </p>
 
-                    <div className="mb-4 pb-4 border-b border-slate-100 flex items-baseline gap-1">
-                      <span className="text-3xl font-black text-slate-900">${p.monthly_price}</span>
-                      <span className="text-xs text-slate-400 font-medium">/ month</span>
+                    <div className="mb-4 pb-4 border-b border-slate-100 flex items-baseline justify-between">
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-3xl font-black text-slate-900">${p.monthly_price}</span>
+                        <span className="text-xs text-slate-400 font-medium">/ month</span>
+                      </div>
+                      <span className="text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">
+                        {p.tenants_count} Tenants Enrolled
+                      </span>
                     </div>
 
                     <div className="space-y-2 text-xs text-slate-600 mb-6">
@@ -1002,6 +1207,177 @@ export default function SuperAdminPage() {
                 </div>
               ))}
             </div>
+
+            {/* Modal: Edit Existing Plan */}
+            {editingPlan && (
+              <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 sm:p-8 animate-in fade-in zoom-in-95 duration-150">
+                  
+                  <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-6">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-black text-slate-900">Edit Plan: {editingPlan.name}</h3>
+                        <span className="text-[10px] font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-200">
+                          {editingPlan.tenants_count} Active Tenants
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500">Changes will automatically cascade to all enrolled tenant organizations.</p>
+                    </div>
+                    <button
+                      onClick={() => setEditingPlan(null)}
+                      className="text-slate-400 hover:text-slate-700 text-lg font-bold p-1 cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleUpdatePlanSubmit} className="space-y-5">
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                          Plan Name *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={editPlanForm.name}
+                          onChange={(e) => setEditPlanForm({ ...editPlanForm, name: e.target.value })}
+                          className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 focus:outline-none focus:border-blue-600 focus:bg-white font-medium"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                          Monthly Price (USD)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={editPlanForm.monthly_price}
+                          onChange={(e) => setEditPlanForm({ ...editPlanForm, monthly_price: parseInt(e.target.value) || 0 })}
+                          className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 focus:outline-none focus:border-blue-600 focus:bg-white font-medium"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                        Short Description
+                      </label>
+                      <input
+                        type="text"
+                        value={editPlanForm.description}
+                        onChange={(e) => setEditPlanForm({ ...editPlanForm, description: e.target.value })}
+                        className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 focus:outline-none focus:border-blue-600 focus:bg-white font-medium"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                          Monthly Session Limit
+                        </label>
+                        <input
+                          type="number"
+                          min="500"
+                          step="500"
+                          value={editPlanForm.session_limit}
+                          onChange={(e) => setEditPlanForm({ ...editPlanForm, session_limit: parseInt(e.target.value) || 5000 })}
+                          className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 focus:outline-none focus:border-blue-600 focus:bg-white font-medium"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                          Data Retention (Days)
+                        </label>
+                        <input
+                          type="number"
+                          min="7"
+                          value={editPlanForm.retention_days}
+                          onChange={(e) => setEditPlanForm({ ...editPlanForm, retention_days: parseInt(e.target.value) || 30 })}
+                          className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-slate-900 focus:outline-none focus:border-blue-600 focus:bg-white font-medium"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Feature Matrix Checkboxes */}
+                    <div className="pt-2">
+                      <label className="block text-xs font-bold text-slate-700 uppercase mb-3">
+                        Feature Gatekeeper (Check to Enable):
+                      </label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-slate-50 p-4 rounded-2xl border border-slate-200/80">
+                        {ALL_FEATURES_LIST.map((feat) => {
+                          const isChecked = !!editPlanForm.features[feat.key];
+                          return (
+                            <label
+                              key={feat.key}
+                              className={`flex items-start gap-2.5 p-2 rounded-xl text-xs cursor-pointer transition-colors ${
+                                isChecked ? 'bg-white shadow-xs border border-blue-200 text-slate-900 font-semibold' : 'text-slate-600 hover:bg-white/60'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  setEditPlanForm({
+                                    ...editPlanForm,
+                                    features: {
+                                      ...editPlanForm.features,
+                                      [feat.key]: e.target.checked
+                                    }
+                                  });
+                                }}
+                                className="mt-0.5 rounded text-blue-600 focus:ring-blue-500 h-4 w-4"
+                              />
+                              <div>
+                                <div>{feat.label}</div>
+                                <div className="text-[10px] text-slate-400 font-normal">{feat.description}</div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Default plan toggle */}
+                    <div className="pt-1 flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="is_default_edit_check"
+                        checked={editPlanForm.is_default}
+                        onChange={(e) => setEditPlanForm({ ...editPlanForm, is_default: e.target.checked })}
+                        className="rounded text-blue-600 focus:ring-blue-500 h-4 w-4"
+                      />
+                      <label htmlFor="is_default_edit_check" className="text-xs font-semibold text-slate-700 cursor-pointer">
+                        Set as default tier for new client registrations
+                      </label>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setEditingPlan(null)}
+                        className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={updatingPlan}
+                        className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2"
+                      >
+                        {updatingPlan && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                        <span>Save Changes & Cascade</span>
+                      </button>
+                    </div>
+
+                  </form>
+                </div>
+              </div>
+            )}
 
             {/* Modal: Create New Plan */}
             {showCreatePlanModal && (

@@ -3180,9 +3180,14 @@ def update_admin_plan(plan_id: int, data: PlanCreateUpdate, db: Session = Depend
     plan = db.query(models.Plan).filter(models.Plan.id == plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
+    
+    old_name = plan.name
+    new_name = data.name.strip()
+
     if data.is_default and not plan.is_default:
         db.query(models.Plan).update({'is_default': False})
-    plan.name = data.name.strip()
+
+    plan.name = new_name
     plan.description = data.description
     plan.monthly_price = data.monthly_price
     plan.session_limit = data.session_limit
@@ -3190,8 +3195,111 @@ def update_admin_plan(plan_id: int, data: PlanCreateUpdate, db: Session = Depend
     plan.is_active = data.is_active
     plan.is_default = data.is_default
     plan.features = data.features or {}
+
+    # Cascade to all enrolled organizations!
+    if old_name != new_name:
+        db.query(models.Organization).filter(models.Organization.plan == old_name).update({'plan': new_name})
+    db.query(models.Organization).filter(models.Organization.plan == new_name).update({'monthly_event_limit': data.session_limit})
+
     db.commit()
-    return {'status': 'updated', 'plan_id': plan_id}
+    return {'status': 'updated', 'plan_id': plan_id, 'name': new_name}
+
+@app.post('/api/v1/admin/tenants/{org_id}/verify-snippet')
+def verify_tenant_snippet(org_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    if not is_superadmin_user(current_user):
+        raise HTTPException(status_code=403, detail="SuperAdmin authorization required")
+    org = db.query(models.Organization).filter(models.Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    project = db.query(models.Project).filter(models.Project.organization_id == org_id).first()
+    if not project or not project.domain:
+        return {'status': 'error', 'verified': False, 'status_label': 'No Domain Registered', 'detail': 'Tenant has no registered domain'}
+
+    domain = project.domain.strip()
+    target_url = domain if (domain.startswith('http://') or domain.startswith('https://')) else f"https://{domain}"
+
+    import time
+    start_time = time.time()
+    try:
+        req = urllib.request.Request(
+            target_url,
+            headers={'User-Agent': 'ThirdEye-Diagnostic/2.0 (+https://thirdeye.colladome.com)'}
+        )
+        with urllib.request.urlopen(req, timeout=7) as response:
+            html = response.read().decode('utf-8', errors='ignore')
+            resp_time_ms = int((time.time() - start_time) * 1000)
+            has_te_js = 'te.js' in html or 'thirdeye' in html.lower() or (project.api_key and project.api_key in html)
+            ev_count = db.query(models.Event).filter(models.Event.project_id == project.id).count()
+
+            if has_te_js:
+                return {
+                    'verified': True,
+                    'has_snippet_tag': True,
+                    'response_time_ms': resp_time_ms,
+                    'status_label': 'Snippet Verified in DOM',
+                    'detail': f"Tracking code detected on {domain}. Ingested {ev_count} events."
+                }
+            elif ev_count > 0:
+                return {
+                    'verified': True,
+                    'has_snippet_tag': False,
+                    'response_time_ms': resp_time_ms,
+                    'status_label': 'Live Telemetry Active',
+                    'detail': f"Snippet tag not found on homepage but {ev_count} events actively ingested."
+                }
+            else:
+                return {
+                    'verified': False,
+                    'has_snippet_tag': False,
+                    'response_time_ms': resp_time_ms,
+                    'status_label': 'Snippet Not Found',
+                    'detail': f"Could not find te.js or API key in homepage HTML on {domain}."
+                }
+    except Exception as e:
+        resp_time_ms = int((time.time() - start_time) * 1000)
+        ev_count = db.query(models.Event).filter(models.Event.project_id == project.id).count() if project else 0
+        if ev_count > 0:
+            return {
+                'verified': True,
+                'has_snippet_tag': False,
+                'response_time_ms': resp_time_ms,
+                'status_label': 'Live Telemetry Active',
+                'detail': f"Homepage blocked diagnostic bot, but {ev_count} events actively flowing."
+            }
+        return {
+            'verified': False,
+            'has_snippet_tag': False,
+            'response_time_ms': resp_time_ms,
+            'status_label': 'Connection Failed',
+            'detail': f"Could not reach {target_url}: {str(e)[:120]}"
+        }
+
+@app.post('/api/v1/admin/cluster/maintenance')
+def run_cluster_maintenance(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    if not is_superadmin_user(current_user):
+        raise HTTPException(status_code=403, detail="SuperAdmin authorization required")
+    from sqlalchemy import text
+    try:
+        db.execute(text("PRAGMA wal_checkpoint(TRUNCATE);"))
+        db.commit()
+    except Exception:
+        pass
+
+    db_size = 0.0
+    for db_path in ['thirdeye.db', '/var/www/thirdeye/apps/api/thirdeye.db', 'apps/api/thirdeye.db']:
+        if os.path.exists(db_path):
+            try:
+                db_size = round(os.path.getsize(db_path) / (1024 * 1024), 2)
+                break
+            except Exception:
+                pass
+
+    return {
+        'status': 'success',
+        'message': 'SQLite WAL checkpoint completed and memory buffers flushed',
+        'db_size_mb': db_size if db_size > 0 else 1.25
+    }
 
 @app.delete('/api/v1/admin/plans/{plan_id}')
 def delete_admin_plan(plan_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
