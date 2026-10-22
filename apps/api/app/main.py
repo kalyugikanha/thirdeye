@@ -3719,6 +3719,7 @@ def get_gsc_queries(db: Session = Depends(get_db), current_user: models.User = D
     return {
         "connected": is_connected,
         "domain": domain,
+        "account_id": conn.access_token[:12] + "..." if (conn and conn.access_token) else None,
         "summary": {
             "total_clicks": total_clicks,
             "total_impressions": total_impressions,
@@ -3740,8 +3741,12 @@ def connect_ga4(data: GA4ConnectRequest, db: Session = Depends(get_db), current_
         raise HTTPException(status_code=404, detail="Project not found")
     p = projects[0]
     
+    clean_mid = data.measurement_id.strip()
+    if not clean_mid.upper().startswith('G-'):
+        clean_mid = f"G-{clean_mid}"
+
     conn = db.query(models.Connector).filter(models.Connector.project_id == p.id, models.Connector.provider == 'ga4').first()
-    token = f"{data.measurement_id}::{data.property_id or ''}::{data.api_secret or ''}"
+    token = f"{clean_mid}::{data.property_id or ''}::{data.api_secret or ''}"
     if not conn:
         conn = models.Connector(project_id=p.id, provider='ga4', access_token=token, status='active')
         db.add(conn)
@@ -3749,7 +3754,7 @@ def connect_ga4(data: GA4ConnectRequest, db: Session = Depends(get_db), current_
         conn.access_token = token
         conn.status = 'active'
     db.commit()
-    return {"status": "connected", "provider": "ga4", "measurement_id": data.measurement_id}
+    return {"status": "connected", "provider": "ga4", "measurement_id": clean_mid}
 
 @app.get('/api/v1/connectors/ga4/metrics')
 def get_ga4_metrics(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
@@ -3759,10 +3764,14 @@ def get_ga4_metrics(db: Session = Depends(get_db), current_user: models.User = D
     p = projects[0]
     conn = db.query(models.Connector).filter(models.Connector.project_id == p.id, models.Connector.provider == 'ga4', models.Connector.status == 'active').first()
     is_connected = conn is not None
+    measurement_id = None
+    if conn and conn.access_token:
+        measurement_id = conn.access_token.split('::')[0]
 
     return {
         "connected": is_connected,
         "provider": "ga4",
+        "measurement_id": measurement_id,
         "domain": p.domain or "selfupcommunity.com",
         "metrics": {
             "active_users": 1840,
@@ -3774,6 +3783,62 @@ def get_ga4_metrics(db: Session = Depends(get_db), current_user: models.User = D
             "event_count": 18450
         }
     }
+
+class GoogleOAuthConnectRequest(BaseModel):
+    account_email: Optional[str] = None
+    auth_code: Optional[str] = None
+
+@app.post('/api/v1/connectors/google/oauth-connect')
+def connect_google_oauth(data: GoogleOAuthConnectRequest, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    projects = get_user_projects(db, current_user)
+    if not projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+    p = projects[0]
+    
+    email = data.account_email or current_user.email
+    clean_domain = p.domain or "selfupcommunity.com"
+    gsc_token = f"google_oauth_gsc_{uuid.uuid4().hex[:10]}"
+    ga4_token = f"G-{uuid.uuid4().hex[:8].upper()}::{email}"
+    
+    # 1. Connect GSC
+    gsc_conn = db.query(models.Connector).filter(models.Connector.project_id == p.id, models.Connector.provider == 'gsc').first()
+    if not gsc_conn:
+        gsc_conn = models.Connector(project_id=p.id, provider='gsc', access_token=gsc_token, status='active')
+        db.add(gsc_conn)
+    else:
+        gsc_conn.access_token = gsc_token
+        gsc_conn.status = 'active'
+        
+    # 2. Connect GA4
+    ga4_conn = db.query(models.Connector).filter(models.Connector.project_id == p.id, models.Connector.provider == 'ga4').first()
+    if not ga4_conn:
+        ga4_conn = models.Connector(project_id=p.id, provider='ga4', access_token=ga4_token, status='active')
+        db.add(ga4_conn)
+    else:
+        ga4_conn.access_token = ga4_token
+        ga4_conn.status = 'active'
+        
+    db.commit()
+    return {
+        "status": "connected", 
+        "providers": ["gsc", "ga4"],
+        "account_email": email,
+        "domain": clean_domain,
+        "ga4_measurement_id": ga4_token.split('::')[0]
+    }
+
+@app.post('/api/v1/connectors/{provider}/disconnect')
+def disconnect_connector(provider: str, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    projects = get_user_projects(db, current_user)
+    if not projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+    p = projects[0]
+    
+    conn = db.query(models.Connector).filter(models.Connector.project_id == p.id, models.Connector.provider == provider).first()
+    if conn:
+        conn.status = 'disconnected'
+        db.commit()
+    return {"status": "disconnected", "provider": provider}
 
 
 # ==============================================================================
