@@ -64,12 +64,12 @@ export default function RegisterPage() {
 
         {/* Top Branding */}
         <div className="relative z-10 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center font-extrabold text-white text-lg shadow-sm">
-            ✦
+          <div className="w-12 h-12 rounded-2xl bg-slate-950/80 backdrop-blur-md border border-white/20 p-1.5 flex items-center justify-center shadow-lg flex-shrink-0">
+            <img src="/logo-icon.png" alt="ThirdEye" className="w-full h-full object-contain" />
           </div>
           <div>
-            <span className="text-xl font-black tracking-tight text-white block">ThirdEye</span>
-            <span className="text-[11px] text-blue-200/90 font-medium -mt-1 block">Enterprise Observability & Replays</span>
+            <span className="text-2xl font-black tracking-tight text-white block">ThirdEye</span>
+            <span className="text-[10px] text-sky-300 font-bold uppercase tracking-wider block">SEE EVERY MOMENT</span>
           </div>
         </div>
 

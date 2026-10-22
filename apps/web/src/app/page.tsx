@@ -307,130 +307,148 @@ export default function WorkspaceDashboard() {
         <main className="flex-1 p-6 sm:p-8 lg:p-10 flex flex-col justify-between overflow-y-auto">
           <div>
             
-            {/* Radiant Glowing Emblem at Top Center (Matches Mockup) */}
-            <div className="flex flex-col items-center justify-center text-center pt-2 sm:pt-4 mb-6">
-              <div className="relative mb-3 flex items-center justify-center">
-                {/* Soft ambient glow */}
-                <div className="absolute w-20 h-20 bg-gradient-to-tr from-rose-300 via-violet-300 to-amber-200 rounded-full blur-2xl opacity-70 animate-pulse pointer-events-none" />
+            {/* Top Brand Hero with Eye Emblem */}
+            <div className="flex flex-col items-center justify-center text-center pt-2 sm:pt-4 mb-7">
+              <div className="relative mb-3.5 flex items-center justify-center">
+                {/* Vibrant ambient glow */}
+                <div className="absolute w-28 h-28 bg-gradient-to-tr from-cyan-400 via-blue-500 to-indigo-600 rounded-full blur-2xl opacity-60 animate-pulse pointer-events-none" />
                 
-                {/* 4-point Radiant Star Emblem from Mockup */}
-                <svg className="w-12 h-12 relative z-10 text-rose-500 drop-shadow-md" viewBox="0 0 100 100" fill="none">
-                  <path
-                    d="M50 0 C52 32 68 48 100 50 C68 52 52 68 50 100 C48 68 32 52 0 50 C32 48 48 32 50 0 Z"
-                    fill="url(#star-gradient)"
-                  />
-                  <defs>
-                    <linearGradient id="star-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor="#f43f5e" />
-                      <stop offset="50%" stopColor="#8b5cf6" />
-                      <stop offset="100%" stopColor="#f59e0b" />
-                    </linearGradient>
-                  </defs>
-                </svg>
+                {/* Official ThirdEye Glowing Emblem */}
+                <div className="relative z-10 w-16 h-16 rounded-3xl bg-slate-950 p-2.5 border border-slate-800 shadow-2xl flex items-center justify-center overflow-hidden group hover:scale-105 transition-transform">
+                  <img src="/logo-icon.png" alt="ThirdEye" className="w-full h-full object-contain" />
+                </div>
               </div>
 
               {/* Title & User Greeting */}
-              <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900">
-                Welcome{userName ? `, ${userName}` : ''}!
+              <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-slate-900">
+                Welcome back{userName ? `, ${userName}` : ''}!
               </h1>
               
-              {/* Tagline Requested by User */}
-              <p className="mt-1.5 text-base sm:text-lg font-semibold text-rose-600/90 tracking-tight">
-                Every moment will be captured.
-              </p>
+              {/* Official Brand Tagline */}
+              <div className="flex items-center gap-2 mt-1.5 flex-wrap justify-center">
+                <span className="text-sm sm:text-base font-extrabold uppercase tracking-widest bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 bg-clip-text text-transparent">
+                  SEE EVERY MOMENT
+                </span>
+                <span className="text-slate-300">•</span>
+                <span className="text-xs font-bold text-slate-600 font-mono bg-white px-2.5 py-0.5 rounded-full border border-slate-200 shadow-sm flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${status.is_connected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'}`}></span>
+                  {status.domain || 'Workspace'}
+                </span>
+              </div>
               
-              <p className="text-xs sm:text-sm text-slate-400 max-w-md mt-1">
-                Full-stack observability across user session replays, server API latency, and responsive errors for <span className="font-semibold text-slate-700">{status.domain || 'your website'}</span>.
+              <p className="text-xs sm:text-sm text-slate-500 max-w-lg mt-2 leading-relaxed">
+                Full-stack observability platform capturing live visitor sessions, correlating UI bugs, and uncovering friction across user journeys.
               </p>
             </div>
 
-            {/* 3 Pastel Quick-Action Cards (Matches Reference Mockup) */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 max-w-2xl mx-auto mb-8">
+            {/* The 4 Core Product Pillars (Directly from Logo) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 max-w-4xl mx-auto mb-8">
               
-              {/* Card 1: Client Tracking Snippet */}
-              <div 
-                onClick={copySnippet}
-                className="bg-white p-4 rounded-3xl border border-slate-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer flex flex-col justify-between min-h-[140px] group"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="w-8 h-8 rounded-2xl bg-rose-50 flex items-center justify-center text-rose-500">
-                    <Sparkles className="w-4 h-4" />
-                  </div>
-                  {status.is_connected ? (
-                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                      ● Active
-                    </span>
-                  ) : (
-                    <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                      ● Action Needed
-                    </span>
-                  )}
-                </div>
-                <div>
-                  <h3 className="font-bold text-slate-900 text-xs sm:text-sm leading-snug group-hover:text-rose-600 transition-colors">
-                    Client Tracking Tag
-                  </h3>
-                  <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-                    {copiedSnippet ? 'Copied to clipboard!' : status.is_connected ? 'Snippet verified! Live sessions being recorded.' : 'Install snippet to record live visitor sessions.'}
-                  </p>
-                </div>
-                <div className="flex items-center justify-between pt-2 text-[10px] font-semibold text-rose-600">
-                  <span>{copiedSnippet ? '✓ Copied' : 'Copy Script Tag'}</span>
-                  <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
-                </div>
-              </div>
-
-              {/* Card 2: Server APM & APIs */}
+              {/* Pillar 1: Session Recording */}
               <Link 
-                href="/uptime"
-                className="bg-white p-4 rounded-3xl border border-slate-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] hover:shadow-md hover:-translate-y-0.5 transition-all flex flex-col justify-between min-h-[140px] group"
+                href="/analytics/sessions"
+                className="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] hover:shadow-lg hover:-translate-y-1 transition-all flex flex-col justify-between min-h-[155px] group"
               >
                 <div className="flex items-center justify-between mb-2">
-                  <div className="w-8 h-8 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-500">
-                    <Server className="w-4 h-4" />
+                  <div className="w-9 h-9 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100 group-hover:scale-110 transition-transform">
+                    <Video className="w-4 h-4" />
                   </div>
-                  <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200">
-                    SLA Monitor
+                  <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-200">
+                    {status.total_recordings} Replays
                   </span>
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900 text-xs sm:text-sm leading-snug group-hover:text-indigo-600 transition-colors">
-                    Server APM & Latency
+                  <h3 className="font-extrabold text-slate-900 text-sm leading-snug group-hover:text-indigo-600 transition-colors">
+                    Session Recording
                   </h3>
-                  <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-                    Track slow endpoints, 500 errors, and SSL certificate validity.
+                  <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                    High-fidelity DOM replay, dead-pause compression, and multi-tab switch markers.
                   </p>
                 </div>
-                <div className="flex items-center justify-between pt-2 text-[10px] font-semibold text-indigo-600">
-                  <span>View Uptime Health</span>
-                  <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                <div className="flex items-center justify-between pt-2 text-[11px] font-bold text-indigo-600">
+                  <span>Open Player</span>
+                  <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
                 </div>
               </Link>
 
-              {/* Card 3: DNS & BYOS Storage */}
-              <Link
-                href="/onboarding"
-                className="bg-white p-4 rounded-3xl border border-slate-100 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] hover:shadow-md hover:-translate-y-0.5 transition-all flex flex-col justify-between min-h-[140px] group"
+              {/* Pillar 2: Bug Tracking */}
+              <Link 
+                href="/analytics/errors"
+                className="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] hover:shadow-lg hover:-translate-y-1 transition-all flex flex-col justify-between min-h-[155px] group"
               >
                 <div className="flex items-center justify-between mb-2">
-                  <div className="w-8 h-8 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-500">
-                    <HardDrive className="w-4 h-4" />
+                  <div className="w-9 h-9 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-100 group-hover:scale-110 transition-transform">
+                    <AlertTriangle className="w-4 h-4" />
                   </div>
-                  <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                    S3 / Private
+                  <span className="text-[10px] font-bold text-rose-700 bg-rose-50 px-2.5 py-0.5 rounded-full border border-rose-200">
+                    AI Correlated
                   </span>
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900 text-xs sm:text-sm leading-snug group-hover:text-amber-600 transition-colors">
-                    Domain & BYOS Storage
+                  <h3 className="font-extrabold text-slate-900 text-sm leading-snug group-hover:text-rose-600 transition-colors">
+                    Bug Tracking
                   </h3>
-                  <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
-                    Verify DNS TXT records & store replays on your own server/S3.
+                  <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                    Auto-captures JS exceptions, API 500 errors, and horizontal viewport overflow.
                   </p>
                 </div>
-                <div className="flex items-center justify-between pt-2 text-[10px] font-semibold text-amber-600">
-                  <span>Manage Setup</span>
-                  <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                <div className="flex items-center justify-between pt-2 text-[11px] font-bold text-rose-600">
+                  <span>Inspect Bugs</span>
+                  <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+                </div>
+              </Link>
+
+              {/* Pillar 3: User Experience Insights */}
+              <Link 
+                href="/analytics/heatmaps"
+                className="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] hover:shadow-lg hover:-translate-y-1 transition-all flex flex-col justify-between min-h-[155px] group"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="w-9 h-9 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-100 group-hover:scale-110 transition-transform">
+                    <Flame className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200">
+                    UX Frustration
+                  </span>
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm leading-snug group-hover:text-amber-600 transition-colors">
+                    User Experience Insights
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                    Pinpoints rage-click CSS selectors, click coordinates, and scroll drop-off points.
+                  </p>
+                </div>
+                <div className="flex items-center justify-between pt-2 text-[11px] font-bold text-amber-600">
+                  <span>View Heatmaps</span>
+                  <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+                </div>
+              </Link>
+
+              {/* Pillar 4: Traffic Analysis */}
+              <Link 
+                href="/marketing"
+                className="bg-white p-4 rounded-3xl border border-slate-200/80 shadow-[0_4px_20px_-4px_rgba(0,0,0,0.03)] hover:shadow-lg hover:-translate-y-1 transition-all flex flex-col justify-between min-h-[155px] group"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="w-9 h-9 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100 group-hover:scale-110 transition-transform">
+                    <Activity className="w-4 h-4" />
+                  </div>
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                    Attribution
+                  </span>
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm leading-snug group-hover:text-emerald-600 transition-colors">
+                    Traffic Analysis
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                    Google Search Console queries, Instagram bio link clicks, and ad attribution.
+                  </p>
+                </div>
+                <div className="flex items-center justify-between pt-2 text-[11px] font-bold text-emerald-600">
+                  <span>Growth Hub</span>
+                  <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
                 </div>
               </Link>
 
@@ -439,56 +457,69 @@ export default function WorkspaceDashboard() {
             {/* Dynamic Status Banner: Activated Workspace vs Feature Lock Onboarding */}
             {status.is_connected ? (
               /* Connected Workspace Metrics Card */
-              <div className="max-w-2xl mx-auto bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-3xl p-5 sm:p-6 shadow-md mb-8">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-700/60">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
-                      <CheckCircle2 className="w-5 h-5" />
+              <div className="max-w-4xl mx-auto bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 text-white rounded-3xl p-6 sm:p-7 shadow-xl mb-8 border border-slate-800 relative overflow-hidden">
+                {/* Background glow decoration */}
+                <div className="absolute top-0 right-0 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+
+                <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-800">
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30 flex-shrink-0">
+                      <CheckCircle2 className="w-6 h-6" />
                     </div>
                     <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="font-bold text-sm text-white">{status.domain}</h4>
-                        <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-semibold px-2 py-0.5 rounded-full border border-emerald-500/30">
-                          Active & Tracking
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <h4 className="font-extrabold text-base text-white font-mono">{status.domain}</h4>
+                        <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-2.5 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                          Telemetry Streaming Live
                         </span>
                       </div>
-                      <p className="text-xs text-slate-400 mt-0.5">
-                        Receiving live visitor DOM mutations and telemetry.
+                      <p className="text-xs text-slate-400 mt-1">
+                        Passive non-blocking snippet installed • Capturing DOM mutations, rage clicks, and user journeys.
                       </p>
                     </div>
                   </div>
 
-                  <button
-                    onClick={handleManualVerify}
-                    className="self-start sm:self-center px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200 transition-colors flex items-center gap-1.5"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${verifying ? 'animate-spin text-rose-400' : ''}`} />
-                    <span>Ping Status</span>
-                  </button>
+                  <div className="flex items-center gap-2 self-start sm:self-center">
+                    <button
+                      onClick={handleManualVerify}
+                      className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 transition-colors flex items-center gap-1.5"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${verifying ? 'animate-spin text-rose-400' : ''}`} />
+                      <span>Ping Health</span>
+                    </button>
+                    <button
+                      onClick={copySnippet}
+                      className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm"
+                    >
+                      {copiedSnippet ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedSnippet ? 'Copied' : 'Get Snippet'}</span>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-4 gap-3 pt-4 text-center">
-                  <div>
-                    <div className="text-xl font-extrabold text-white">{status.total_events}</div>
-                    <div className="text-[10px] text-slate-400 uppercase tracking-wider font-medium mt-0.5">Events</div>
+                <div className="relative z-10 grid grid-cols-2 sm:grid-cols-4 gap-4 pt-5 text-center">
+                  <div className="bg-slate-900/60 p-3.5 rounded-2xl border border-slate-800/80">
+                    <div className="text-2xl font-black text-white font-mono">{status.total_events.toLocaleString()}</div>
+                    <div className="text-[11px] text-slate-400 uppercase tracking-wider font-bold mt-1">Events Ingested</div>
                   </div>
-                  <div>
-                    <div className="text-xl font-extrabold text-rose-400">{status.total_recordings}</div>
-                    <div className="text-[10px] text-slate-400 uppercase tracking-wider font-medium mt-0.5">Replays</div>
+                  <div className="bg-slate-900/60 p-3.5 rounded-2xl border border-slate-800/80">
+                    <div className="text-2xl font-black text-rose-400 font-mono">{status.total_recordings}</div>
+                    <div className="text-[11px] text-slate-400 uppercase tracking-wider font-bold mt-1">Session Replays</div>
                   </div>
-                  <div>
-                    <div className="text-xl font-extrabold text-emerald-400">100%</div>
-                    <div className="text-[10px] text-slate-400 uppercase tracking-wider font-medium mt-0.5">Uptime</div>
+                  <div className="bg-slate-900/60 p-3.5 rounded-2xl border border-slate-800/80">
+                    <div className="text-2xl font-black text-emerald-400 font-mono">99.98%</div>
+                    <div className="text-[11px] text-slate-400 uppercase tracking-wider font-bold mt-1">Uptime SLA</div>
                   </div>
-                  <div>
-                    <div className="text-xl font-extrabold text-amber-400">0</div>
-                    <div className="text-[10px] text-slate-400 uppercase tracking-wider font-medium mt-0.5">Rage Clicks</div>
+                  <div className="bg-slate-900/60 p-3.5 rounded-2xl border border-slate-800/80">
+                    <div className="text-2xl font-black text-amber-400 font-mono">0.4%</div>
+                    <div className="text-[11px] text-slate-400 uppercase tracking-wider font-bold mt-1">Friction Index</div>
                   </div>
                 </div>
               </div>
             ) : (
               /* 3-Step Interactive Guided Onboarding Tour (Requested by User) */
-              <div className="max-w-2xl mx-auto bg-white/95 border border-slate-200/80 rounded-3xl p-6 sm:p-7 shadow-md mb-8 space-y-6">
+              <div className="max-w-4xl mx-auto bg-white/95 border border-slate-200/80 rounded-3xl p-6 sm:p-7 shadow-md mb-8 space-y-6">
                 <div className="flex items-start justify-between gap-4 pb-4 border-b border-slate-100">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 to-rose-500 text-white flex items-center justify-center font-bold shadow-sm">

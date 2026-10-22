@@ -304,17 +304,17 @@ export default function Sidebar() {
           
           {/* Brand Header */}
           <Link href="/" className="flex items-center gap-2.5 px-2 group">
-            <div className="w-8 h-8 rounded-xl bg-slate-900 text-white flex items-center justify-center font-bold text-sm shadow-sm group-hover:scale-105 transition-transform">
-              ✦
+            <div className="w-9 h-9 rounded-xl bg-slate-950 p-1 flex items-center justify-center shadow-md group-hover:scale-105 transition-transform overflow-hidden border border-slate-800 flex-shrink-0">
+              <img src="/logo-icon.png" alt="ThirdEye" className="w-full h-full object-contain" />
             </div>
             <div>
               <div className="flex items-center gap-1.5">
                 <span className="font-extrabold text-lg text-slate-900 tracking-tight">ThirdEye</span>
-                <span className="text-[9px] font-bold uppercase tracking-wider bg-slate-900 text-white px-1.5 py-0.2 rounded-full">
+                <span className="text-[9px] font-bold uppercase tracking-wider bg-indigo-600 text-white px-1.5 py-0.2 rounded-full">
                   Live
                 </span>
               </div>
-              <span className="text-[10px] text-slate-400 block -mt-1 font-medium">Enterprise Observability</span>
+              <span className="text-[9px] text-indigo-600 font-bold tracking-wider block -mt-1 uppercase">SEE EVERY MOMENT</span>
             </div>
           </Link>
 
