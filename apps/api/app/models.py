@@ -1,7 +1,20 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, JSON
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, JSON, Index, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database import Base
+
+class Plan(Base):
+    __tablename__ = 'plans'
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    description = Column(String, nullable=True)
+    monthly_price = Column(Integer, default=0)
+    session_limit = Column(Integer, default=5000)
+    retention_days = Column(Integer, default=30)
+    is_active = Column(Boolean, default=True)
+    is_default = Column(Boolean, default=False)
+    features = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class User(Base):
     __tablename__ = 'users'
@@ -56,25 +69,34 @@ class Connector(Base):
 
 class Event(Base):
     __tablename__ = 'events'
+    __table_args__ = (
+        Index('idx_events_project_id', 'project_id'),
+        Index('idx_events_created_at', 'created_at'),
+        Index('idx_events_proj_created', 'project_id', 'created_at'),
+        Index('idx_events_proj_type', 'project_id', 'event_type'),
+    )
     id = Column(Integer, primary_key=True, index=True)
-    project_id = Column(Integer, ForeignKey('projects.id'))
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
     event_type = Column(String, index=True) # e.g., 'pageview', 'click'
     url = Column(String)
     referrer = Column(String, nullable=True)
     session_id = Column(String, index=True)
     properties = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     project = relationship('Project', back_populates='events')
 
 class SessionRecording(Base):
     __tablename__ = 'session_recordings'
+    __table_args__ = (
+        Index('idx_recordings_proj_created', 'project_id', 'created_at'),
+    )
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(String, index=True, nullable=False)
     project_id = Column(Integer, ForeignKey('projects.id'), index=True, nullable=True)
     duration = Column(Integer, default=0)
     file_path = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     project = relationship('Project', back_populates='recordings')
 
