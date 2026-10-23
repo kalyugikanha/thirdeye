@@ -43,13 +43,38 @@ STORAGE_DIR_ROOT.mkdir(parents=True, exist_ok=True)
 models.Base.metadata.create_all(bind=engine)
 
 def safe_migrate_sqlite_schema():
-    # SQLite startup schema auto-migration for dns_verified and dns_token
+    migration_sqls = [
+        "ALTER TABLE projects ADD COLUMN dns_verified BOOLEAN DEFAULT 0",
+        "ALTER TABLE projects ADD COLUMN dns_token TEXT",
+        "ALTER TABLE organizations ADD COLUMN plan TEXT DEFAULT 'Pro'",
+        "ALTER TABLE organizations ADD COLUMN monthly_event_limit INTEGER DEFAULT 100000",
+        "ALTER TABLE uptime_monitors ADD COLUMN http_method TEXT DEFAULT 'GET'",
+        "ALTER TABLE uptime_monitors ADD COLUMN headers JSON DEFAULT '{}'",
+        "ALTER TABLE uptime_monitors ADD COLUMN request_body TEXT",
+        "ALTER TABLE uptime_monitors ADD COLUMN assertions JSON DEFAULT '[]'",
+        "ALTER TABLE uptime_monitors ADD COLUMN failure_threshold INTEGER DEFAULT 1",
+        "ALTER TABLE uptime_monitors ADD COLUMN consecutive_failures INTEGER DEFAULT 0",
+        "ALTER TABLE uptime_monitors ADD COLUMN is_degraded BOOLEAN DEFAULT 0",
+        "ALTER TABLE uptime_monitors ADD COLUMN last_status TEXT",
+        "ALTER TABLE alert_channels ADD COLUMN events JSON DEFAULT '[]'",
+        "ALTER TABLE alert_channels ADD COLUMN severity JSON DEFAULT '[]'",
+        """CREATE TABLE IF NOT EXISTS alert_event_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            organization_id INTEGER,
+            channel_id INTEGER,
+            channel_name TEXT,
+            channel_type TEXT,
+            title TEXT,
+            alert_type TEXT,
+            status TEXT DEFAULT 'delivered',
+            response_code INTEGER,
+            error_message TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )"""
+    ]
     try:
         with engine.connect() as _conn:
-            for col_sql in [
-                "ALTER TABLE projects ADD COLUMN dns_verified BOOLEAN DEFAULT 0",
-                "ALTER TABLE projects ADD COLUMN dns_token TEXT"
-            ]:
+            for col_sql in migration_sqls:
                 try:
                     _conn.execute(text(col_sql))
                     _conn.commit()
@@ -62,42 +87,11 @@ def safe_migrate_sqlite_schema():
         if _db_path.exists():
             try:
                 with sqlite3.connect(str(_db_path)) as _sconn:
-                    cols = [c[1] for c in _sconn.execute("PRAGMA table_info(projects)").fetchall()]
-                    if 'dns_verified' not in cols:
-                        _sconn.execute("ALTER TABLE projects ADD COLUMN dns_verified BOOLEAN DEFAULT 0")
-                    if 'dns_token' not in cols:
-                        _sconn.execute("ALTER TABLE projects ADD COLUMN dns_token TEXT")
-
-                    org_cols = [c[1] for c in _sconn.execute("PRAGMA table_info(organizations)").fetchall()]
-                    if 'plan' not in org_cols:
-                        _sconn.execute("ALTER TABLE organizations ADD COLUMN plan TEXT DEFAULT 'Pro'")
-                    if 'monthly_event_limit' not in org_cols:
-                        _sconn.execute("ALTER TABLE organizations ADD COLUMN monthly_event_limit INTEGER DEFAULT 100000")
-
-                    # Migration for alert_channels
-                    ach_cols = [c[1] for c in _sconn.execute("PRAGMA table_info(alert_channels)").fetchall()]
-                    if 'events' not in ach_cols:
-                        _sconn.execute("ALTER TABLE alert_channels ADD COLUMN events JSON DEFAULT '[]'")
-                    if 'severity' not in ach_cols:
-                        _sconn.execute("ALTER TABLE alert_channels ADD COLUMN severity JSON DEFAULT '[]'")
-
-                    # Migration for alert_event_logs table
-                    _sconn.execute("""
-                        CREATE TABLE IF NOT EXISTS alert_event_logs (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            organization_id INTEGER,
-                            channel_id INTEGER,
-                            channel_name TEXT,
-                            channel_type TEXT,
-                            title TEXT,
-                            alert_type TEXT,
-                            status TEXT DEFAULT 'delivered',
-                            response_code INTEGER,
-                            error_message TEXT,
-                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                        )
-                    """)
-
+                    for col_sql in migration_sqls:
+                        try:
+                            _sconn.execute(col_sql)
+                        except Exception:
+                            pass
                     _sconn.commit()
             except Exception:
                 pass
@@ -185,9 +179,16 @@ def create_default_user():
     def _bg_uptime_daemon():
         import time
         time.sleep(15)
-        logger.info('Background uptime monitoring daemon started (checking every 60s)...')
+        lock_file = BASE_DIR / '.uptime_daemon.lock'
+        import logging; logging.getLogger('uptime_daemon').info('Background uptime monitoring daemon started (checking every 60s)...')
         while True:
             try:
+                # Leader election across multiple Uvicorn workers via lockfile timestamp
+                now_ts = time.time()
+                if lock_file.exists() and (now_ts - lock_file.stat().st_mtime) < 52:
+                    time.sleep(60)
+                    continue
+                lock_file.write_text(str(os.getpid()))
                 db_d = SessionLocal()
                 try:
                     monitors = db_d.query(models.UptimeMonitor).all()
@@ -498,7 +499,49 @@ def track_event(event: EventCreate, request: Request, db: Session = Depends(get_
     update_live_visitor_presence(db, project.id, event.session_id, event.url, event.referrer, event.properties)
     if event.event_type == 'code_error':
         enterprise.check_error_spike(db, project.id)
+    _check_org_quota_alert(db, project)
     return {'status': 'tracked'}
+
+_QUOTA_CHECK_COUNTERS = {}
+
+def _check_org_quota_alert(db: Session, project: models.Project):
+    if not project or not project.organization_id:
+        return
+    org_id = project.organization_id
+    cnt = _QUOTA_CHECK_COUNTERS.get(org_id, 0) + 1
+    _QUOTA_CHECK_COUNTERS[org_id] = cnt
+    if cnt % 25 != 1:
+        return
+    try:
+        org = db.query(models.Organization).filter(models.Organization.id == org_id).first()
+        if not org or not org.monthly_event_limit or org.monthly_event_limit <= 0:
+            return
+        proj_ids = [p.id for p in db.query(models.Project.id).filter(models.Project.organization_id == org_id).all()]
+        total_events = db.query(models.Event).filter(models.Event.project_id.in_(proj_ids)).count() if proj_ids else 0
+        pct = round((total_events / org.monthly_event_limit) * 100, 1)
+        from app import alerts
+        if pct >= 100:
+            alerts.dispatch_alert(
+                db=db,
+                organization_id=org_id,
+                title=f'🚨 Monthly Event Quota Exceeded (100%): {org.name}',
+                message=f'Your workspace has used {total_events:,} / {org.monthly_event_limit:,} events ({pct}%). Upgrade your plan to avoid ingestion throttling.',
+                alert_type='critical',
+                metadata={'usage_pct': pct, 'total_events': total_events, 'limit': org.monthly_event_limit},
+                event_category='quota_limit'
+            )
+        elif pct >= 80:
+            alerts.dispatch_alert(
+                db=db,
+                organization_id=org_id,
+                title=f'⚠️ Monthly Event Quota at {pct}%: {org.name}',
+                message=f'Your workspace has reached {total_events:,} / {org.monthly_event_limit:,} monthly events ({pct}%).',
+                alert_type='warning',
+                metadata={'usage_pct': pct, 'total_events': total_events, 'limit': org.monthly_event_limit},
+                event_category='quota_limit'
+            )
+    except Exception:
+        pass
 
 # --- SESSION RECORDINGS (MOCK S3 & METADATA + AUTOMATIC EVENT EXTRACTION) ---
 class RecordingPayload(BaseModel):
@@ -2113,7 +2156,7 @@ class MonitorCreate(BaseModel):
     headers: Optional[dict] = {}
     request_body: Optional[str] = None
     assertions: Optional[list] = []
-    failure_threshold: Optional[int] = 2
+    failure_threshold: Optional[int] = 1
 
 class MonitorUpdate(BaseModel):
     name: Optional[str] = None
@@ -2137,7 +2180,7 @@ def create_monitor(data: MonitorCreate, db: Session = Depends(get_db), current_u
         headers=data.headers or {},
         request_body=data.request_body,
         assertions=data.assertions or [],
-        failure_threshold=data.failure_threshold or 2,
+        failure_threshold=data.failure_threshold or 1,
         consecutive_failures=0
     )
     db.add(monitor)
@@ -2176,11 +2219,18 @@ def delete_monitor(monitor_id: int, db: Session = Depends(get_db), current_user:
     db.commit()
     return {"status": "deleted"}
 
+_SSL_CACHE = {}
+
 def get_ssl_details(url: str):
     import ssl
     import socket
     from urllib.parse import urlparse
     import datetime as dt_mod
+    import time as _tm
+    now_t = _tm.time()
+    cached = _SSL_CACHE.get(url)
+    if cached and (now_t - cached[0]) < 21600:
+        return cached[1]
     try:
         parsed = urlparse(url)
         hostname = parsed.hostname or url.replace('https://', '').replace('http://', '').split('/')[0]
@@ -2196,7 +2246,9 @@ def get_ssl_details(url: str):
                         days_rem = max(0, (expire_dt - dt_mod.datetime.utcnow()).days)
                         issuer_dict = dict(x[0] for x in cert.get('issuer', []))
                         issuer_name = issuer_dict.get('organizationName') or issuer_dict.get('commonName') or "Let's Encrypt"
-                        return {"valid": True, "days_remaining": days_rem, "issuer": issuer_name}
+                        res_ssl = {"valid": True, "days_remaining": days_rem, "issuer": issuer_name}
+                        _SSL_CACHE[url] = (now_t, res_ssl)
+                        return res_ssl
     except Exception:
         pass
     return {"valid": True, "days_remaining": 82, "issuer": "Let's Encrypt Authority"}
@@ -2361,24 +2413,33 @@ def _execute_monitor_check(db: Session, monitor: models.UptimeMonitor):
         monitor.consecutive_failures = 0
         monitor.error_message = None
         monitor.is_degraded = (elapsed > 1500)
+        if monitor.is_degraded:
+            alerts.dispatch_alert(
+                db=db,
+                organization_id=org_id,
+                title=f"⚠️ High Latency Degraded: {monitor.name}",
+                message=f"Monitor '{monitor.name}' ({monitor.url}) responded slowly ({elapsed}ms > 1500ms threshold).",
+                alert_type="warning",
+                metadata={"monitor_id": monitor.id, "latency_ms": elapsed, "url": monitor.url},
+                event_category="uptime_degraded"
+            )
     else:
         # Failure detected
         monitor.consecutive_failures = (monitor.consecutive_failures or 0) + 1
-        threshold = monitor.failure_threshold or 2
+        threshold = monitor.failure_threshold or 1
         fail_reason = error_detail or f"HTTP {status_code} - Assertion failed: {[r for r in assertion_results if not r.get('passed')]}"
         monitor.error_message = fail_reason[:250]
 
         if monitor.consecutive_failures >= threshold:
-            if prev_status != "down":
-                alerts.dispatch_alert(
-                    db=db,
-                    organization_id=org_id,
-                    title=f"🔴 Monitor DOWN: {monitor.name}",
-                    message=f"Monitor '{monitor.name}' ({monitor.url}) failed {monitor.consecutive_failures} consecutive checks. Error: {monitor.error_message}",
-                    alert_type="error",
-                    metadata={"monitor_id": monitor.id, "consecutive_failures": monitor.consecutive_failures, "error": monitor.error_message, "url": monitor.url},
-                    event_category="uptime_down"
-                )
+            enterprise.dispatch_incident_webhook(
+                db=db,
+                project_id=monitor.project_id,
+                title=f"🔴 Monitor DOWN: {monitor.name}",
+                message=f"Monitor '{monitor.name}' ({monitor.url}) failed {monitor.consecutive_failures} consecutive checks. Error: {monitor.error_message}",
+                incident_type="uptime_downtime",
+                details={"URL": monitor.url, "Error": monitor.error_message},
+                incident_key=f"monitor_down:{monitor.id}"
+            )
             monitor.status = "down"
         else:
             monitor.status = "degraded"
@@ -2605,21 +2666,25 @@ def create_alert_channel(data: AlertChannelCreate, db: Session = Depends(get_db)
         "is_active": ch.is_active
     }
 
+DEFAULT_ALERT_EVENTS = ['uptime_down', 'uptime_recovered', 'uptime_degraded', 'ssl_expiry', 'error_spike', 'quota_limit', 'security_finding']
+
 @app.get('/api/v1/alert-channels')
 def list_alert_channels(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    from app import alerts
     channels = db.query(models.AlertChannel).filter(models.AlertChannel.organization_id == current_user.organization_id).all()
     return [{
         "id": c.id,
         "name": c.name,
         "type": c.type,
-        "config": c.config,
-        "events": c.events or ['uptime_down', 'uptime_recovered', 'ssl_expiry', 'error_spike', 'quota_limit'],
+        "config": alerts.mask_channel_config(c.config),
+        "events": c.events or DEFAULT_ALERT_EVENTS,
         "severity": c.severity or ['critical', 'error', 'warning', 'info'],
         "is_active": c.is_active
     } for c in channels]
 
 @app.put('/api/v1/alert-channels/{channel_id}')
 def update_alert_channel(channel_id: int, data: AlertChannelUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    from app import alerts
     ch = db.query(models.AlertChannel).filter(
         models.AlertChannel.id == channel_id,
         models.AlertChannel.organization_id == current_user.organization_id
@@ -2628,7 +2693,7 @@ def update_alert_channel(channel_id: int, data: AlertChannelUpdate, db: Session 
         raise HTTPException(status_code=404, detail="Alert channel not found")
     if data.name is not None: ch.name = data.name
     if data.type is not None: ch.type = data.type
-    if data.config is not None: ch.config = data.config
+    if data.config is not None: ch.config = alerts.merge_channel_config(ch.config, data.config)
     if data.events is not None: ch.events = data.events
     if data.severity is not None: ch.severity = data.severity
     if data.is_active is not None: ch.is_active = data.is_active
@@ -2638,8 +2703,8 @@ def update_alert_channel(channel_id: int, data: AlertChannelUpdate, db: Session 
         "id": ch.id,
         "name": ch.name,
         "type": ch.type,
-        "config": ch.config,
-        "events": ch.events,
+        "config": alerts.mask_channel_config(ch.config),
+        "events": ch.events or DEFAULT_ALERT_EVENTS,
         "severity": ch.severity,
         "is_active": ch.is_active
     }

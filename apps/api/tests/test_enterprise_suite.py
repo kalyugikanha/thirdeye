@@ -235,3 +235,49 @@ def test_09_feedback_widget_toggle_and_simulate(client):
     assert client.post("/api/v1/feedback/simulate", headers=ha).json()["created"] == 4
     items = client.get("/api/v1/analytics/feedback", headers=ha).json()["items"]
     assert len(items) == 4 and all(da in i["url"] for i in items)
+
+
+# -------------------------------------------------------------- 5. phase 1.5
+def test_10_phase1_5_masking_and_hostinger_validation(client):
+    headers, pid, key, domain = register_tenant(client, "phase15.com")
+    # Create an email channel with a secret smtp_pass
+    ch = client.post("/api/v1/alert-channels", headers=headers, json={
+        "name": "Hostinger Ops",
+        "type": "email",
+        "config": {
+            "to": "ops@phase15.com",
+            "smtp_host": "smtp.hostinger.com",
+            "smtp_port": "465",
+            "smtp_user": "alerts@phase15.com",
+            "smtp_pass": "SuperSecretHostingerPass999"
+        },
+        "events": ["uptime_down", "ssl_expiry"]
+    }).json()
+
+    # GET must mask smtp_pass with ••••s999
+    channels = client.get("/api/v1/alert-channels", headers=headers).json()
+    assert len(channels) == 1
+    masked_pass = channels[0]["config"]["smtp_pass"]
+    assert masked_pass.startswith("••••") and masked_pass.endswith("s999")
+    assert "SuperSecret" not in masked_pass
+
+    # PUT with the masked password should preserve the original secret in DB
+    upd = client.put(f"/api/v1/alert-channels/{ch['id']}", headers=headers, json={
+        "name": "Hostinger Ops Updated",
+        "config": channels[0]["config"],
+        "events": ["uptime_down", "ssl_expiry", "quota_limit"]
+    })
+    assert upd.status_code == 200
+    assert upd.json()["events"] == ["uptime_down", "ssl_expiry", "quota_limit"]
+
+    # Create an email channel WITHOUT smtp_pass and verify test endpoint returns failed (never fake delivered)
+    ch_bad = client.post("/api/v1/alert-channels", headers=headers, json={
+        "name": "Incomplete SMTP",
+        "type": "email",
+        "config": {"to": "ops@phase15.com", "smtp_user": "alerts@phase15.com", "smtp_pass": ""}
+    }).json()
+    test_res = client.post(f"/api/v1/alert-channels/{ch_bad['id']}/test", headers=headers).json()
+    assert test_res["status"] == "failed" and test_res["success"] is False
+    assert "Hostinger SMTP credentials required" in (test_res["error"] or "")
+
+

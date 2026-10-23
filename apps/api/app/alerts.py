@@ -1,5 +1,7 @@
+import os
 import urllib.request as ur
 import urllib.parse as up
+import urllib.error as ue
 import json
 import logging
 import time
@@ -8,23 +10,33 @@ import hashlib
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from app import models
 
 logger = logging.getLogger('alerts')
 
-# In-memory sliding window cache for alert deduplication and flapping protection
-# Key: (organization_id, title) -> last_dispatched_timestamp
+# Fast in-memory cache + DB-backed deduplication across multi-worker processes
 _ALERT_THROTTLE_CACHE = {}
-THROTTLE_WINDOW_SECONDS = 120  # 2 minutes minimum between identical alerts
+
+CATEGORY_COOLDOWN_SECONDS = {
+    'uptime_down': 120,
+    'uptime_recovered': 60,
+    'uptime_degraded': 600,
+    'error_spike': 900,
+    'cwv_regression': 900,
+    'security_finding': 900,
+    'ssl_expiry': 86400,     # Once per 24h
+    'quota_limit': 86400,    # Once per 24h
+    'manual_test': 0
+}
 
 COLOR_MAP = {
-    'critical': '#dc2626', # Dark Red
-    'error': '#ef4444',    # Red (DOWN)
-    'success': '#10b981',  # Green (RECOVERED)
-    'warning': '#f59e0b',  # Amber (DEGRADED / SSL)
-    'info': '#3b82f6'      # Blue
+    'critical': '#dc2626',
+    'error': '#ef4444',
+    'success': '#10b981',
+    'warning': '#f59e0b',
+    'info': '#3b82f6'
 }
 
 EMOJI_MAP = {
@@ -35,11 +47,37 @@ EMOJI_MAP = {
     'info': 'ℹ️'
 }
 
+SECRET_KEYS = {'bot_token', 'smtp_pass', 'callmebot_api_key', 'secret_token', 'auth_token', 'routing_key'}
+
+
+def mask_channel_config(config: dict) -> dict:
+    """Masks sensitive credentials before returning channel config to the frontend."""
+    if not config or not isinstance(config, dict):
+        return {}
+    masked = {}
+    for k, v in config.items():
+        if k in SECRET_KEYS and isinstance(v, str) and len(v) > 0:
+            masked[k] = ('••••' + v[-4:]) if len(v) > 4 else '••••'
+        else:
+            masked[k] = v
+    return masked
+
+
+def merge_channel_config(existing_config: dict, new_config: dict) -> dict:
+    """Preserves existing secrets when the frontend submits a masked value ('••••...')."""
+    base = dict(existing_config or {})
+    for k, v in (new_config or {}).items():
+        if k in SECRET_KEYS and isinstance(v, str) and v.startswith('••••'):
+            continue
+        base[k] = v
+    return base
+
+
 def _build_slack_payload(title: str, message: str, alert_type: str, metadata: dict = None) -> dict:
-    hex_color = COLOR_MAP.get(alert_type, '#3b82f6')
+    hex_color = COLOR_MAP.get(alert_type, '#ef4444' if alert_type in ('error', 'critical') else '#3b82f6')
     emoji = EMOJI_MAP.get(alert_type, '🔔')
     ts = int(time.time())
-    
+
     meta_fields = []
     if metadata:
         if 'url' in metadata:
@@ -50,6 +88,8 @@ def _build_slack_payload(title: str, message: str, alert_type: str, metadata: di
             meta_fields.append({"type": "mrkdwn", "text": f"*Error Detail:*\n```{str(metadata['error'])[:180]}```"})
         if 'days_remaining' in metadata:
             meta_fields.append({"type": "mrkdwn", "text": f"*Days Remaining:*\n`{metadata['days_remaining']} days`"})
+        if 'usage_pct' in metadata:
+            meta_fields.append({"type": "mrkdwn", "text": f"*Quota Usage:*\n`{metadata['usage_pct']}%`"})
 
     blocks = [
         {
@@ -80,21 +120,13 @@ def _build_slack_payload(title: str, message: str, alert_type: str, metadata: di
         "elements": [
             {
                 "type": "button",
-                "text": {
-                    "type": "plain_text",
-                    "text": "Open Dashboard",
-                    "emoji": True
-                },
+                "text": {"type": "plain_text", "text": "Open Dashboard", "emoji": True},
                 "url": "https://thirdeye.colladome.com/",
                 "style": "primary" if alert_type == "success" else "danger"
             },
             {
                 "type": "button",
-                "text": {
-                    "type": "plain_text",
-                    "text": "View Incidents",
-                    "emoji": True
-                },
+                "text": {"type": "plain_text", "text": "View Incidents", "emoji": True},
                 "url": "https://thirdeye.colladome.com/alerts"
             }
         ]
@@ -106,11 +138,13 @@ def _build_slack_payload(title: str, message: str, alert_type: str, metadata: di
         "attachments": [
             {
                 "color": hex_color,
+                "blocks": blocks,
                 "footer": "ThirdEye Continuous Observability & Synthetic Engine",
                 "ts": ts
             }
         ]
     }
+
 
 def _build_discord_payload(title: str, message: str, alert_type: str, metadata: dict = None) -> dict:
     hex_color = COLOR_MAP.get(alert_type, '#3b82f6')
@@ -136,11 +170,58 @@ def _build_discord_payload(title: str, message: str, alert_type: str, metadata: 
             "fields": fields,
             "url": "https://thirdeye.colladome.com/alerts",
             "timestamp": datetime.utcnow().isoformat() + "Z",
-            "footer": {
-                "text": "ThirdEye High-Reliability Observability"
-            }
+            "footer": {"text": "ThirdEye High-Reliability Observability"}
         }]
     }
+
+
+def _build_teams_payload(title: str, message: str, alert_type: str, metadata: dict = None) -> dict:
+    hex_color = COLOR_MAP.get(alert_type, '#3b82f6').replace('#', '')
+    emoji = EMOJI_MAP.get(alert_type, '🔔')
+    facts = [{"name": "Severity", "value": alert_type.upper()}]
+    if metadata:
+        for k, v in list(metadata.items())[:5]:
+            facts.append({"name": str(k), "value": str(v)[:120]})
+    return {
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        "themeColor": hex_color,
+        "summary": f"{emoji} {title}",
+        "sections": [{
+            "activityTitle": f"{emoji} **{title}**",
+            "activitySubtitle": "ThirdEye Observability Suite",
+            "text": message,
+            "facts": facts,
+            "markdown": True
+        }],
+        "potentialAction": [{
+            "@type": "OpenUri",
+            "name": "Open ThirdEye Dashboard",
+            "targets": [{"os": "default", "uri": "https://thirdeye.colladome.com/alerts"}]
+        }]
+    }
+
+
+def _http_send_with_retry(req: ur.Request, timeout: int = 8, max_attempts: int = 2) -> tuple:
+    """Executes HTTP request with retry on transient 5xx/network errors."""
+    last_err = None
+    last_code = 500
+    for attempt in range(max_attempts):
+        try:
+            with ur.urlopen(req, timeout=timeout) as resp:
+                body = resp.read().decode('utf-8', errors='ignore')
+                return ('delivered', resp.status, body)
+        except ue.HTTPError as he:
+            last_code = he.code
+            last_err = f"HTTP Error {he.code}: {he.reason}"
+            if he.code < 500:
+                break
+        except Exception as ex:
+            last_err = str(ex)[:200]
+        if attempt < max_attempts - 1:
+            time.sleep(0.4)
+    return ('failed', last_code, last_err)
+
 
 def _send_channel_dispatch(channel: models.AlertChannel, title: str, message: str, alert_type: str, metadata: dict = None) -> tuple:
     """
@@ -163,9 +244,8 @@ def _send_channel_dispatch(channel: models.AlertChannel, title: str, message: st
                 data=json.dumps(payload).encode('utf-8'),
                 headers={'Content-Type': 'application/json', 'User-Agent': 'ThirdEye-Alert/2.0'}
             )
-            with ur.urlopen(req, timeout=8) as resp:
-                resp_code = resp.status
-                return ('delivered', resp_code, None)
+            status, code, err_or_body = _http_send_with_retry(req)
+            return (status, code, None if status == 'delivered' else err_or_body)
 
         # 2. DISCORD
         elif ch_type == 'discord':
@@ -177,17 +257,53 @@ def _send_channel_dispatch(channel: models.AlertChannel, title: str, message: st
                 data=json.dumps(payload).encode('utf-8'),
                 headers={'Content-Type': 'application/json', 'User-Agent': 'ThirdEye-Alert/2.0'}
             )
-            with ur.urlopen(req, timeout=8) as resp:
-                resp_code = resp.status
-                return ('delivered', resp_code, None)
+            status, code, err_or_body = _http_send_with_retry(req)
+            return (status, code, None if status == 'delivered' else err_or_body)
 
-        # 3. TELEGRAM BOT
+        # 3. MICROSOFT TEAMS
+        elif ch_type == 'teams':
+            if not url or not url.startswith('http'):
+                return ('failed', 400, 'Invalid Microsoft Teams webhook URL')
+            payload = _build_teams_payload(title, message, alert_type, metadata)
+            req = ur.Request(
+                url,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={'Content-Type': 'application/json', 'User-Agent': 'ThirdEye-Alert/2.0'}
+            )
+            status, code, err_or_body = _http_send_with_retry(req)
+            return (status, code, None if status == 'delivered' else err_or_body)
+
+        # 4. PAGERDUTY (Events API v2)
+        elif ch_type == 'pagerduty':
+            routing_key = cfg.get('routing_key')
+            if not routing_key:
+                return ('failed', 400, 'Missing PagerDuty Events v2 Integration/Routing Key')
+            pd_sev = 'critical' if alert_type in ('critical', 'error') else ('warning' if alert_type == 'warning' else 'info')
+            pd_payload = {
+                "routing_key": routing_key,
+                "event_action": "resolve" if alert_type == "success" else "trigger",
+                "payload": {
+                    "summary": f"{title}: {message[:250]}",
+                    "source": (metadata or {}).get('url') or "thirdeye.colladome.com",
+                    "severity": pd_sev,
+                    "custom_details": metadata or {}
+                }
+            }
+            req = ur.Request(
+                "https://events.pagerduty.com/v2/enqueue",
+                data=json.dumps(pd_payload).encode('utf-8'),
+                headers={'Content-Type': 'application/json'}
+            )
+            status, code, err_or_body = _http_send_with_retry(req)
+            return (status, code, None if status == 'delivered' else err_or_body)
+
+        # 5. TELEGRAM BOT
         elif ch_type == 'telegram':
             bot_token = cfg.get('bot_token')
             chat_id = cfg.get('chat_id')
             if not bot_token or not chat_id:
-                return ('failed', 400, 'Missing bot_token or chat_id')
-            
+                return ('failed', 400, 'Missing Telegram bot_token or chat_id')
+
             tg_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             formatted_text = (
                 f"<b>{emoji} {title}</b>\n\n"
@@ -207,22 +323,29 @@ def _send_channel_dispatch(channel: models.AlertChannel, title: str, message: st
                 data=json.dumps(tg_payload).encode('utf-8'),
                 headers={'Content-Type': 'application/json'}
             )
-            with ur.urlopen(req, timeout=8) as resp:
-                resp_code = resp.status
-                return ('delivered', resp_code, None)
+            status, code, err_or_body = _http_send_with_retry(req)
+            return (status, code, None if status == 'delivered' else err_or_body)
 
-        # 4. EMAIL (SMTP / Transactional)
+        # 6. EMAIL (Hostinger Webmail SMTP / Custom SMTP)
         elif ch_type == 'email':
-            target_email = cfg.get('email')
+            target_email = cfg.get('email') or cfg.get('to')
             if not target_email or '@' not in target_email:
                 return ('failed', 400, 'Invalid recipient email address')
-            
-            smtp_host = cfg.get('smtp_host') or '127.0.0.1'
-            smtp_port = int(cfg.get('smtp_port') or 25)
-            smtp_user = cfg.get('smtp_user')
-            smtp_pass = cfg.get('smtp_pass')
 
-            # Render HTML Email
+            smtp_host = (cfg.get('smtp_host') or os.getenv('SMTP_HOST') or 'smtp.hostinger.com').strip()
+            smtp_port = int(cfg.get('smtp_port') or os.getenv('SMTP_PORT') or 465)
+            smtp_user = (cfg.get('smtp_user') or os.getenv('SMTP_USER') or '').strip()
+            smtp_pass = (cfg.get('smtp_pass') or os.getenv('SMTP_PASS') or '').strip()
+            from_email = (cfg.get('from_email') or smtp_user or os.getenv('SMTP_FROM') or '').strip()
+
+            if not smtp_user or not smtp_pass:
+                return (
+                    'failed',
+                    400,
+                    'Hostinger SMTP credentials required: Enter Sender Email (smtp_user) and Password (smtp_pass) in channel config.'
+                )
+
+            recipients = [e.strip() for e in target_email.split(',') if '@' in e]
             html_content = f"""
             <!DOCTYPE html>
             <html>
@@ -251,47 +374,47 @@ def _send_channel_dispatch(channel: models.AlertChannel, title: str, message: st
             try:
                 msg = MIMEMultipart('alternative')
                 msg['Subject'] = f"{emoji} [{alert_type.upper()}] {title}"
-                msg['From'] = cfg.get('from_email') or 'alerts@thirdeye.colladome.com'
-                msg['To'] = target_email
+                msg['From'] = from_email
+                msg['To'] = ', '.join(recipients)
                 msg.attach(MIMEText(message, 'plain'))
                 msg.attach(MIMEText(html_content, 'html'))
 
-                if smtp_host and smtp_host != '127.0.0.1':
-                    server = smtplib.SMTP(smtp_host, smtp_port, timeout=8)
+                if smtp_port == 465:
+                    server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10)
+                else:
+                    server = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
+                    server.ehlo()
                     if cfg.get('use_tls', True):
                         server.starttls()
-                    if smtp_user and smtp_pass:
-                        server.login(smtp_user, smtp_pass)
-                    server.sendmail(msg['From'], [target_email], msg.as_string())
-                    server.quit()
-                    return ('delivered', 250, None)
-                else:
-                    # Simulated / system local delivery
-                    logger.info(f"Email alert recorded for {target_email}: {title}")
-                    return ('delivered', 200, None)
+                        server.ehlo()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(from_email, recipients, msg.as_string())
+                server.quit()
+                return ('delivered', 250, None)
             except Exception as smtp_err:
-                logger.warning(f"SMTP send failed: {smtp_err}")
-                return ('failed', 500, f"SMTP Error: {str(smtp_err)[:150]}")
+                logger.warning(f"Hostinger/SMTP send failed: {smtp_err}")
+                return ('failed', 500, f"SMTP Error ({smtp_host}:{smtp_port}): {str(smtp_err)[:160]}")
 
-        # 5. WHATSAPP / SMS (Twilio or CallMeBot API)
-        elif ch_type == 'whatsapp' or ch_type == 'sms':
-            phone = cfg.get('phone_number') or cfg.get('to_number')
-            callmebot_key = cfg.get('callmebot_api_key')
-            
-            # CallMeBot WhatsApp Gateway (Instant Free WhatsApp integration)
+        # 7. WHATSAPP / SMS (CallMeBot or Twilio)
+        elif ch_type in ('whatsapp', 'sms'):
+            phone = (cfg.get('phone_number') or cfg.get('to_number') or '').strip()
+            callmebot_key = (cfg.get('callmebot_api_key') or '').strip()
+
             if callmebot_key and phone:
                 clean_phone = phone.replace('+', '').replace(' ', '').replace('-', '')
-                msg_text = f"🚨 *ThirdEye Alert*\n\n*{title}*\n{message}\n\nhttps://thirdeye.colladome.com/alerts"
+                msg_text = f"{emoji} *ThirdEye Alert*\n\n*{title}*\n{message}\n\nhttps://thirdeye.colladome.com/alerts"
                 cm_url = f"https://api.callmebot.com/whatsapp.php?phone={clean_phone}&text={up.quote(msg_text)}&apikey={callmebot_key}"
                 req = ur.Request(cm_url, headers={'User-Agent': 'ThirdEye-Alert/2.0'})
-                with ur.urlopen(req, timeout=10) as resp:
-                    return ('delivered', resp.status, None)
+                status, code, body_or_err = _http_send_with_retry(req, timeout=12)
+                if status == 'delivered' and body_or_err and ('invalid' in body_or_err.lower() or 'error' in body_or_err.lower()):
+                    return ('failed', 400, f"CallMeBot Error: {body_or_err[:140]}")
+                return (status, code, None if status == 'delivered' else body_or_err)
 
-            # Twilio REST API integration
             account_sid = cfg.get('account_sid')
             auth_token = cfg.get('auth_token')
             from_number = cfg.get('from_number')
             if account_sid and auth_token and from_number and phone:
+                import base64
                 twilio_url = f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json"
                 is_wa = ch_type == 'whatsapp' or 'whatsapp:' in from_number
                 sender = f"whatsapp:{from_number}" if (is_wa and not from_number.startswith('whatsapp:')) else from_number
@@ -304,16 +427,16 @@ def _send_channel_dispatch(channel: models.AlertChannel, title: str, message: st
                 }).encode('utf-8')
 
                 req = ur.Request(twilio_url, data=body_data, method='POST')
-                auth_header = 'Basic ' + up.base64.b64encode(f"{account_sid}:{auth_token}".encode('utf-8')).decode('utf-8')
+                auth_header = 'Basic ' + base64.b64encode(f"{account_sid}:{auth_token}".encode('utf-8')).decode('utf-8')
                 req.add_header('Authorization', auth_header)
                 req.add_header('Content-Type', 'application/x-www-form-urlencoded')
 
-                with ur.urlopen(req, timeout=10) as resp:
-                    return ('delivered', resp.status, None)
+                status, code, err_or_body = _http_send_with_retry(req, timeout=10)
+                return (status, code, None if status == 'delivered' else err_or_body)
 
-            return ('failed', 400, 'Missing WhatsApp/SMS credentials (requires phone_number and Twilio or CallMeBot key)')
+            return ('failed', 400, 'Missing WhatsApp credentials: Provide Phone Number and CallMeBot API Key')
 
-        # 6. CUSTOM SIGNED WEBHOOK
+        # 8. CUSTOM SIGNED WEBHOOK
         else:
             if not url or not url.startswith('http'):
                 return ('failed', 400, 'Invalid webhook target URL')
@@ -330,7 +453,6 @@ def _send_channel_dispatch(channel: models.AlertChannel, title: str, message: st
             }
             json_bytes = json.dumps(payload_dict, sort_keys=True).encode('utf-8')
 
-            # Optional HMAC-SHA256 signature
             secret = cfg.get('secret_token') or 'thirdeye_default_secret'
             sig = hmac.new(secret.encode('utf-8'), json_bytes, hashlib.sha256).hexdigest()
 
@@ -340,25 +462,23 @@ def _send_channel_dispatch(channel: models.AlertChannel, title: str, message: st
                 'X-ThirdEye-Signature': f"sha256={sig}",
                 'X-ThirdEye-Event': f"alert.{alert_type}"
             }
-            # Custom headers passed in config
             if isinstance(cfg.get('custom_headers'), dict):
                 headers.update(cfg.get('custom_headers'))
 
             req = ur.Request(url, data=json_bytes, headers=headers)
-            with ur.urlopen(req, timeout=10) as resp:
-                return ('delivered', resp.status, None)
+            status, code, err_or_body = _http_send_with_retry(req, timeout=10)
+            return (status, code, None if status == 'delivered' else err_or_body)
 
-    except ur.HTTPError as he:
+    except ue.HTTPError as he:
         return ('failed', he.code, f"HTTP Error {he.code}: {he.reason}")
     except Exception as ex:
         return ('failed', 500, str(ex)[:200])
 
+
 def test_single_channel(db: Session, channel: models.AlertChannel, organization_id: int) -> dict:
-    """
-    Tests a single specific alert channel and logs the test result to AlertEventLog.
-    """
+    """Tests a single specific alert channel and logs the test result to AlertEventLog."""
     title = "🔔 Test Notification from ThirdEye"
-    message = f"This is a test notification confirming that your {channel.type.capitalize()} alert channel is properly connected and operational."
+    message = f"This is a live verification test confirming your {channel.type.upper()} alert channel ({channel.name}) is properly connected."
     alert_type = "info"
     metadata = {
         "test": True,
@@ -369,7 +489,6 @@ def test_single_channel(db: Session, channel: models.AlertChannel, organization_
 
     status, code, err = _send_channel_dispatch(channel, title, message, alert_type, metadata)
 
-    # Log to AlertEventLog
     try:
         log_entry = models.AlertEventLog(
             organization_id=organization_id,
@@ -394,9 +513,10 @@ def test_single_channel(db: Session, channel: models.AlertChannel, organization_
         "channel_type": channel.type,
         "status": status,
         "response_code": code,
-        "message": f"{channel.name} test alert delivered successfully!" if status == 'delivered' else f"Delivery failed: {err}",
+        "message": f"{channel.name} test alert delivered successfully (HTTP {code})!" if status == 'delivered' else f"Delivery failed: {err}",
         "error": err
     }
+
 
 def dispatch_alert(
     db: Session,
@@ -408,10 +528,39 @@ def dispatch_alert(
     event_category: str = 'uptime_down'
 ):
     """
-    Main entry point for dispatching alerts across all configured channels for an organization.
-    Includes in-memory deduplication, in-app notification, and database event logging.
+    Unified Omnichannel Alert Dispatcher across all event categories.
+    - DB + In-memory deduplication (works across multiple Uvicorn workers).
+    - Creates in-app Notification.
+    - Dispatches to all matching active AlertChannels.
+    - Records audit trail in AlertEventLog.
     """
-    # 1. In-app Notification (always created)
+    cooldown_sec = CATEGORY_COOLDOWN_SECONDS.get(event_category, 120)
+    cache_key = (organization_id, event_category, title)
+    now = time.time()
+
+    if cooldown_sec > 0:
+        # 1. Fast in-memory check
+        last_sent = _ALERT_THROTTLE_CACHE.get(cache_key, 0)
+        if (now - last_sent) < cooldown_sec:
+            return
+
+        # 2. Cross-worker DB check in AlertEventLog
+        try:
+            cutoff = datetime.utcnow() - timedelta(seconds=cooldown_sec)
+            recent_db_log = db.query(models.AlertEventLog).filter(
+                models.AlertEventLog.organization_id == organization_id,
+                models.AlertEventLog.title == title,
+                models.AlertEventLog.created_at >= cutoff
+            ).first()
+            if recent_db_log:
+                _ALERT_THROTTLE_CACHE[cache_key] = now
+                return
+        except Exception:
+            pass
+
+    _ALERT_THROTTLE_CACHE[cache_key] = now
+
+    # 3. Create in-app Notification
     try:
         notif = models.Notification(
             organization_id=organization_id,
@@ -422,39 +571,27 @@ def dispatch_alert(
         db.add(notif)
         db.commit()
     except Exception as ex:
+        db.rollback()
         logger.error(f"Failed to create Notification record: {ex}")
 
-    # 2. In-memory Throttling / Deduplication check
-    cache_key = (organization_id, title)
-    now = time.time()
-    last_sent = _ALERT_THROTTLE_CACHE.get(cache_key, 0)
-    if (now - last_sent) < THROTTLE_WINDOW_SECONDS:
-        logger.info(f"Throttled identical alert for org {organization_id}: {title}")
-        return
-
-    _ALERT_THROTTLE_CACHE[cache_key] = now
-
-    # 3. Query Active Channels for this organization
+    # 4. Query Active Channels for this organization
     channels = db.query(models.AlertChannel).filter(
         models.AlertChannel.organization_id == organization_id,
         models.AlertChannel.is_active == True
     ).all()
 
     for ch in channels:
-        # Check event filter if configured
         if ch.events and isinstance(ch.events, list) and len(ch.events) > 0:
-            if event_category not in ch.events:
+            if event_category != 'manual_test' and event_category not in ch.events:
                 continue
 
-        # Check severity filter if configured
         if ch.severity and isinstance(ch.severity, list) and len(ch.severity) > 0:
-            if alert_type not in ch.severity:
+            # Map 'success' (recovery) to always pass if 'uptime_recovered' is enabled
+            if alert_type != 'success' and alert_type not in ch.severity:
                 continue
 
-        # Dispatch
         status, code, err = _send_channel_dispatch(ch, title, message, alert_type, metadata)
 
-        # Record log
         try:
             log_entry = models.AlertEventLog(
                 organization_id=organization_id,
@@ -470,4 +607,5 @@ def dispatch_alert(
             db.add(log_entry)
             db.commit()
         except Exception as log_ex:
+            db.rollback()
             logger.warning(f"Failed to record alert event log for channel {ch.id}: {log_ex}")

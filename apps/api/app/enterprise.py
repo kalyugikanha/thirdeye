@@ -132,23 +132,52 @@ def dispatch_incident_webhook(db: Session, project_id: int, title: str, message:
             models.AlertChannel.organization_id == project.organization_id,
             models.AlertChannel.is_active == True,  # noqa: E712
         ).all()
+
+        # Create in-app notification for the incident
+        try:
+            db.add(models.Notification(
+                organization_id=project.organization_id,
+                title=title,
+                message=message,
+                type='error' if incident_type in ('uptime_downtime', 'error_spike') else 'warning'
+            ))
+        except Exception:
+            pass
+
+        from app import alerts as _alerts_mod
         for ch in channels:
             url = (ch.config or {}).get('url')
-            if ch.type not in ('slack', 'discord', 'webhook') or not url:
-                continue
-            builder = {'slack': build_slack_payload, 'discord': build_discord_payload}.get(ch.type, build_generic_payload)
-            code, state = None, 'delivered'
-            try:
-                code = _post_json(url, builder(title, message, incident_type, details))
-                if code is None or code >= 400:
+            if ch.type in ('slack', 'discord', 'webhook') and url:
+                builder = {'slack': build_slack_payload, 'discord': build_discord_payload}.get(ch.type, build_generic_payload)
+                code, state, err_msg = None, 'delivered', None
+                try:
+                    code = _post_json(url, builder(title, message, incident_type, details))
+                    if code is None or code >= 400:
+                        state = 'failed'
+                except Exception as exc:  # network error / non-2xx raises HTTPError
                     state = 'failed'
-            except Exception as exc:  # network error / non-2xx raises HTTPError
-                state = 'failed'
-                code = getattr(exc, 'code', None)
-                logger.warning('Incident dispatch to channel %s failed: %s', ch.id, exc)
+                    code = getattr(exc, 'code', None)
+                    err_msg = str(exc)[:200]
+                    logger.warning('Incident dispatch to channel %s failed: %s', ch.id, exc)
+            else:
+                # Telegram, Hostinger Email, CallMeBot WhatsApp, Teams, PagerDuty
+                state, code, err_msg = _alerts_mod._send_channel_dispatch(
+                    ch, title, message, 'error', details
+                )
             db.add(models.IncidentLog(channel_id=ch.id, project_id=project_id, incident_key=key,
                                       incident_type=incident_type, title=title, message=message[:1000],
                                       status=state, response_code=code))
+            db.add(models.AlertEventLog(
+                organization_id=project.organization_id,
+                channel_id=ch.id,
+                channel_name=ch.name,
+                channel_type=ch.type,
+                title=title,
+                alert_type='error',
+                status=state,
+                response_code=code,
+                error_message=err_msg
+            ))
             result['dispatched' if state == 'delivered' else 'failed'] += 1
         db.commit()
     except Exception as exc:
