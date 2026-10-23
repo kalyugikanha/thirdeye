@@ -18,7 +18,7 @@ import csv
 import io
 from dotenv import load_dotenv
 load_dotenv()  # Load .env file so GEMINI_API_KEY is available
-from app.database import engine, Base, get_db
+from app.database import engine, Base, get_db, SessionLocal
 from app import models, auth, enterprise, growth, intelligence
 from pydantic import BaseModel
 try:
@@ -73,6 +73,30 @@ def safe_migrate_sqlite_schema():
                         _sconn.execute("ALTER TABLE organizations ADD COLUMN plan TEXT DEFAULT 'Pro'")
                     if 'monthly_event_limit' not in org_cols:
                         _sconn.execute("ALTER TABLE organizations ADD COLUMN monthly_event_limit INTEGER DEFAULT 100000")
+
+                    # Migration for alert_channels
+                    ach_cols = [c[1] for c in _sconn.execute("PRAGMA table_info(alert_channels)").fetchall()]
+                    if 'events' not in ach_cols:
+                        _sconn.execute("ALTER TABLE alert_channels ADD COLUMN events JSON DEFAULT '[]'")
+                    if 'severity' not in ach_cols:
+                        _sconn.execute("ALTER TABLE alert_channels ADD COLUMN severity JSON DEFAULT '[]'")
+
+                    # Migration for alert_event_logs table
+                    _sconn.execute("""
+                        CREATE TABLE IF NOT EXISTS alert_event_logs (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            organization_id INTEGER,
+                            channel_id INTEGER,
+                            channel_name TEXT,
+                            channel_type TEXT,
+                            title TEXT,
+                            alert_type TEXT,
+                            status TEXT DEFAULT 'delivered',
+                            response_code INTEGER,
+                            error_message TEXT,
+                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
 
                     _sconn.commit()
             except Exception:
@@ -157,6 +181,30 @@ def read_root():
 @app.on_event('startup')
 def create_default_user():
     safe_migrate_sqlite_schema()
+
+    def _bg_uptime_daemon():
+        import time
+        time.sleep(15)
+        logger.info('Background uptime monitoring daemon started (checking every 60s)...')
+        while True:
+            try:
+                db_d = SessionLocal()
+                try:
+                    monitors = db_d.query(models.UptimeMonitor).all()
+                    for m in monitors:
+                        if m.url:
+                            try:
+                                _execute_monitor_check(db_d, m)
+                            except Exception:
+                                pass
+                finally:
+                    db_d.close()
+            except Exception:
+                pass
+            time.sleep(60)
+
+    import threading
+    threading.Thread(target=_bg_uptime_daemon, daemon=True).start()
     db = next(get_db())
     org = db.query(models.Organization).filter(models.Organization.name == 'ThirdEye Admin').first()
     if not org:
@@ -2195,8 +2243,7 @@ def list_monitors(db: Session = Depends(get_db), current_user: models.User = Dep
         })
     return results
 
-@app.post('/api/v1/monitors/{monitor_id}/check')
-def check_monitor(monitor_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def _execute_monitor_check(db: Session, monitor: models.UptimeMonitor):
     import urllib.request as ur
     import urllib.error as ue
     import time as tm
@@ -2204,15 +2251,8 @@ def check_monitor(monitor_id: int, db: Session = Depends(get_db), current_user: 
     from datetime import datetime as dt2
     from app import alerts
 
-    monitor = db.query(models.UptimeMonitor).filter(models.UptimeMonitor.id == monitor_id).first()
-    if not monitor:
-        raise HTTPException(status_code=404, detail="Monitor not found")
-    user_project_ids = get_user_project_ids(db, current_user)
-    if not is_superadmin_user(current_user) and monitor.project_id not in user_project_ids:
-        raise HTTPException(status_code=403, detail="Forbidden: monitor does not belong to user")
-
     project = db.query(models.Project).filter(models.Project.id == monitor.project_id).first()
-    org_id = project.organization_id if project else current_user.organization_id
+    org_id = project.organization_id if project else 1
 
     start = tm.time()
     method = (monitor.http_method or "GET").upper()
@@ -2305,16 +2345,16 @@ def check_monitor(monitor_id: int, db: Session = Depends(get_db), current_user: 
     monitor.last_checked = dt2.utcnow()
 
     if all_assertions_passed and not error_detail:
-        # Check passed!
         if prev_status == "down":
-            # RECOVERY ALERT (Checkly Standard)
+            # RECOVERY ALERT
             alerts.dispatch_alert(
                 db=db,
                 organization_id=org_id,
                 title=f"🟢 RECOVERED: {monitor.name}",
                 message=f"Monitor '{monitor.name}' ({monitor.url}) has recovered and is now passing all checks. Response time: {elapsed}ms.",
                 alert_type="success",
-                metadata={"monitor_id": monitor.id, "latency_ms": elapsed, "url": monitor.url}
+                metadata={"monitor_id": monitor.id, "latency_ms": elapsed, "url": monitor.url},
+                event_category="uptime_recovered"
             )
 
         monitor.status = "up"
@@ -2329,7 +2369,6 @@ def check_monitor(monitor_id: int, db: Session = Depends(get_db), current_user: 
         monitor.error_message = fail_reason[:250]
 
         if monitor.consecutive_failures >= threshold:
-            # Reached threshold: HARD DOWN ALERT!
             if prev_status != "down":
                 alerts.dispatch_alert(
                     db=db,
@@ -2337,12 +2376,27 @@ def check_monitor(monitor_id: int, db: Session = Depends(get_db), current_user: 
                     title=f"🔴 Monitor DOWN: {monitor.name}",
                     message=f"Monitor '{monitor.name}' ({monitor.url}) failed {monitor.consecutive_failures} consecutive checks. Error: {monitor.error_message}",
                     alert_type="error",
-                    metadata={"monitor_id": monitor.id, "consecutive_failures": monitor.consecutive_failures, "error": monitor.error_message}
+                    metadata={"monitor_id": monitor.id, "consecutive_failures": monitor.consecutive_failures, "error": monitor.error_message, "url": monitor.url},
+                    event_category="uptime_down"
                 )
             monitor.status = "down"
         else:
-            # Flapping protection: degraded, waiting for next consecutive run
             monitor.status = "degraded"
+
+    # SSL Warning check if expiring soon
+    if monitor.url and monitor.url.startswith('https'):
+        ssl_data = get_ssl_details(monitor.url)
+        days = ssl_data.get('days_remaining', 0)
+        if 0 < days <= 14:
+            alerts.dispatch_alert(
+                db=db,
+                organization_id=org_id,
+                title=f"⚠️ SSL Expiring Soon: {monitor.name}",
+                message=f"SSL certificate for {monitor.url} expires in {days} days. Please renew to prevent security warnings.",
+                alert_type="warning",
+                metadata={"monitor_id": monitor.id, "url": monitor.url, "days_remaining": days},
+                event_category="ssl_expiry"
+            )
 
     db.commit()
 
@@ -2356,6 +2410,16 @@ def check_monitor(monitor_id: int, db: Session = Depends(get_db), current_user: 
         "ssl_info": ssl_data,
         "latency_history": generate_latency_sparkline(monitor.response_time_ms)
     }
+
+@app.post('/api/v1/monitors/{monitor_id}/check')
+def check_monitor(monitor_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    monitor = db.query(models.UptimeMonitor).filter(models.UptimeMonitor.id == monitor_id).first()
+    if not monitor:
+        raise HTTPException(status_code=404, detail="Monitor not found")
+    user_project_ids = get_user_project_ids(db, current_user)
+    if not is_superadmin_user(current_user) and monitor.project_id not in user_project_ids:
+        raise HTTPException(status_code=403, detail="Forbidden: monitor does not belong to user")
+    return _execute_monitor_check(db, monitor)
 
 # ===================== NOTIFICATIONS =====================
 @app.get('/api/v1/notifications')
@@ -2495,11 +2559,27 @@ def seo_audit(data: SeoAuditRequest, current_user: models.User = Depends(auth.ge
         return {"score": 0, "error": str(e), "issues": [{"id": "fetch", "label": f"Could not inspect URL: {str(e)}", "pass": False}]}
 
 
-# ===================== PHASE 3: ALERT CHANNELS =====================
+# ===================== PHASE 3: ALERT CHANNELS & OMNICHANNEL ENGINE =====================
 class AlertChannelCreate(BaseModel):
     name: str
-    type: str  # slack, discord, webhook, email
+    type: str  # slack, discord, telegram, email, whatsapp, webhook
     config: Dict[str, Any]
+    events: Optional[List[str]] = ['uptime_down', 'uptime_recovered', 'ssl_expiry', 'error_spike', 'quota_limit']
+    severity: Optional[List[str]] = ['critical', 'error', 'warning', 'info']
+
+class AlertChannelUpdate(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+    config: Optional[Dict[str, Any]] = None
+    events: Optional[List[str]] = None
+    severity: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+
+class CustomAlertTrigger(BaseModel):
+    title: str
+    message: str
+    alert_type: str = 'info'
+    event_category: str = 'manual_test'
 
 @app.post('/api/v1/alert-channels')
 def create_alert_channel(data: AlertChannelCreate, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
@@ -2507,37 +2587,116 @@ def create_alert_channel(data: AlertChannelCreate, db: Session = Depends(get_db)
         organization_id=current_user.organization_id,
         name=data.name,
         type=data.type,
-        config=data.config
+        config=data.config,
+        events=data.events or ['uptime_down', 'uptime_recovered', 'ssl_expiry', 'error_spike', 'quota_limit'],
+        severity=data.severity or ['critical', 'error', 'warning', 'info'],
+        is_active=True
     )
     db.add(ch)
     db.commit()
     db.refresh(ch)
-    return {"id": ch.id, "name": ch.name, "type": ch.type, "is_active": ch.is_active}
+    return {
+        "id": ch.id,
+        "name": ch.name,
+        "type": ch.type,
+        "config": ch.config,
+        "events": ch.events,
+        "severity": ch.severity,
+        "is_active": ch.is_active
+    }
 
 @app.get('/api/v1/alert-channels')
 def list_alert_channels(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     channels = db.query(models.AlertChannel).filter(models.AlertChannel.organization_id == current_user.organization_id).all()
-    return [{"id": c.id, "name": c.name, "type": c.type, "config": c.config, "is_active": c.is_active} for c in channels]
+    return [{
+        "id": c.id,
+        "name": c.name,
+        "type": c.type,
+        "config": c.config,
+        "events": c.events or ['uptime_down', 'uptime_recovered', 'ssl_expiry', 'error_spike', 'quota_limit'],
+        "severity": c.severity or ['critical', 'error', 'warning', 'info'],
+        "is_active": c.is_active
+    } for c in channels]
+
+@app.put('/api/v1/alert-channels/{channel_id}')
+def update_alert_channel(channel_id: int, data: AlertChannelUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    ch = db.query(models.AlertChannel).filter(
+        models.AlertChannel.id == channel_id,
+        models.AlertChannel.organization_id == current_user.organization_id
+    ).first()
+    if not ch:
+        raise HTTPException(status_code=404, detail="Alert channel not found")
+    if data.name is not None: ch.name = data.name
+    if data.type is not None: ch.type = data.type
+    if data.config is not None: ch.config = data.config
+    if data.events is not None: ch.events = data.events
+    if data.severity is not None: ch.severity = data.severity
+    if data.is_active is not None: ch.is_active = data.is_active
+    db.commit()
+    db.refresh(ch)
+    return {
+        "id": ch.id,
+        "name": ch.name,
+        "type": ch.type,
+        "config": ch.config,
+        "events": ch.events,
+        "severity": ch.severity,
+        "is_active": ch.is_active
+    }
 
 @app.post('/api/v1/alert-channels/{channel_id}/test')
 def test_alert_channel(channel_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    ch = db.query(models.AlertChannel).filter(
+        models.AlertChannel.id == channel_id,
+        models.AlertChannel.organization_id == current_user.organization_id
+    ).first()
+    if not ch:
+        raise HTTPException(status_code=404, detail="Alert channel not found")
     from app import alerts
-    alerts.dispatch_alert(
-        db=db,
-        organization_id=current_user.organization_id,
-        title="🧪 Test Alert",
-        message="This is a test notification from ThirdEye Platform.",
-        alert_type="info"
-    )
-    return {"status": "Test alert dispatched"}
+    res = alerts.test_single_channel(db, ch, current_user.organization_id)
+    return res
 
 @app.delete('/api/v1/alert-channels/{channel_id}')
 def delete_alert_channel(channel_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    ch = db.query(models.AlertChannel).filter(models.AlertChannel.id == channel_id, models.AlertChannel.organization_id == current_user.organization_id).first()
+    ch = db.query(models.AlertChannel).filter(
+        models.AlertChannel.id == channel_id,
+        models.AlertChannel.organization_id == current_user.organization_id
+    ).first()
     if ch:
         db.delete(ch)
         db.commit()
     return {"ok": True}
+
+@app.get('/api/v1/alert-channels/logs')
+def get_alert_logs(limit: int = 50, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    logs = db.query(models.AlertEventLog).filter(
+        models.AlertEventLog.organization_id == current_user.organization_id
+    ).order_by(models.AlertEventLog.created_at.desc()).limit(limit).all()
+    return [{
+        "id": l.id,
+        "channel_id": l.channel_id,
+        "channel_name": l.channel_name,
+        "channel_type": l.channel_type,
+        "title": l.title,
+        "alert_type": l.alert_type,
+        "status": l.status,
+        "response_code": l.response_code,
+        "error_message": l.error_message,
+        "created_at": l.created_at.isoformat() if l.created_at else None
+    } for l in logs]
+
+@app.post('/api/v1/alerts/trigger-custom')
+def trigger_custom_alert(data: CustomAlertTrigger, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    from app import alerts
+    alerts.dispatch_alert(
+        db=db,
+        organization_id=current_user.organization_id,
+        title=data.title,
+        message=data.message,
+        alert_type=data.alert_type,
+        event_category=data.event_category
+    )
+    return {"status": "dispatched", "title": data.title}
 
 # ===================== PHASE 3: TEAM MANAGEMENT & RBAC =====================
 class InviteCreate(BaseModel):

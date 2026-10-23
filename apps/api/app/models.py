@@ -140,7 +140,23 @@ class AlertChannel(Base):
     name = Column(String)
     type = Column(String, default='webhook')
     config = Column(JSON, nullable=True)
+    events = Column(JSON, default=list)
+    severity = Column(JSON, default=list)
     is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class AlertEventLog(Base):
+    __tablename__ = 'alert_event_logs'
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey('organizations.id'), index=True)
+    channel_id = Column(Integer, nullable=True)
+    channel_name = Column(String, nullable=True)
+    channel_type = Column(String, default='webhook')
+    title = Column(String)
+    alert_type = Column(String, default='error')
+    status = Column(String, default='delivered')  # delivered, failed, throttled
+    response_code = Column(Integer, nullable=True)
+    error_message = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class OrganizationInvite(Base):

@@ -4,6 +4,7 @@ import Sidebar from '@/components/Sidebar';
 import { apiUrl } from '@/lib/api';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { 
   Bell, 
   Check, 
@@ -13,7 +14,8 @@ import {
   RefreshCw,
   Sparkles,
   Loader2,
-  CheckCheck
+  CheckCheck,
+  Sliders
 } from 'lucide-react';
 
 interface Notification {
@@ -126,6 +128,13 @@ export default function AlertsPage() {
             </div>
 
             <div className="flex items-center gap-3">
+              <Link
+                href="/settings/alerts"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-colors"
+              >
+                <Sliders className="w-3.5 h-3.5 text-slate-500" />
+                Alert Destinations
+              </Link>
               {unreadCount > 0 && (
                 <button
                   onClick={handleMarkAllRead}
