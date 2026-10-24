@@ -127,6 +127,29 @@ export default function AlertChannelsPage() {
   const [creating, setCreating] = useState(false);
   const [testingId, setTestingId] = useState<number | null>(null);
   const [testResult, setTestResult] = useState<{ id: number; success: boolean; message: string } | null>(null);
+  const [qrLoadingId, setQrLoadingId] = useState<number | null>(null);
+  const [qrState, setQrState] = useState<{ id: number; state: string; qr_base64: string | null; message: string } | null>(null);
+
+  const handleFetchWaQr = async (id: number) => {
+    setQrLoadingId(id);
+    const token = localStorage.getItem('te_token');
+    try {
+      const res = await fetch(apiUrl(`/api/v1/alert-channels/${id}/whatsapp-qr`), {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      setQrState({
+        id,
+        state: data.state || 'unknown',
+        qr_base64: data.qr_base64 || null,
+        message: data.message || data.error || ''
+      });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setQrLoadingId(null);
+    }
+  };
 
   const fetchChannels = async () => {
     const token = localStorage.getItem('te_token');
@@ -954,6 +977,18 @@ export default function AlertChannelsPage() {
                               )}
                             </button>
 
+                            {ch.type === 'whatsapp' && ch.config?.green_instance_id && (
+                              <button
+                                type="button"
+                                onClick={() => handleFetchWaQr(ch.id)}
+                                disabled={qrLoadingId === ch.id}
+                                className="px-3.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-bold border border-emerald-200 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                              >
+                                {qrLoadingId === ch.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Smartphone className="w-3.5 h-3.5" />}
+                                <span>Link WhatsApp QR</span>
+                              </button>
+                            )}
+
                             <button
                               type="button"
                               onClick={() => handleTestChannel(ch.id)}
@@ -974,6 +1009,36 @@ export default function AlertChannelsPage() {
                             </button>
                           </div>
                         </div>
+
+                        {qrState && qrState.id === ch.id && (
+                          <div className="mt-3 p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row items-center gap-4">
+                            {qrState.qr_base64 ? (
+                              <img
+                                src={`data:image/png;base64,${qrState.qr_base64}`}
+                                alt="WhatsApp QR Code"
+                                className="w-44 h-44 rounded-xl border border-slate-200 bg-white p-2 shadow-xs"
+                              />
+                            ) : null}
+                            <div className="space-y-1.5 text-xs">
+                              <p className="font-bold text-slate-900">
+                                WhatsApp Status: <span className={qrState.state === 'authorized' ? 'text-emerald-600' : 'text-amber-600'}>{qrState.state.toUpperCase()}</span>
+                              </p>
+                              <p className="text-slate-600">{qrState.message}</p>
+                              {qrState.state !== 'authorized' && (
+                                <p className="text-[11px] text-slate-500">
+                                  Open WhatsApp on your phone &rarr; <strong>Settings / 3-dots &rarr; Linked Devices &rarr; Link a Device</strong> &rarr; Scan this QR code. Once scanned, click <strong>Send Test</strong>!
+                                </p>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleFetchWaQr(ch.id)}
+                                className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer"
+                              >
+                                Refresh QR / Status
+                              </button>
+                            </div>
+                          </div>
+                        )}
 
                         {testResult && testResult.id === ch.id && (
                           <div className={`mt-3 p-2.5 rounded-xl text-xs flex items-center gap-2 ${

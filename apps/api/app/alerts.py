@@ -408,6 +408,21 @@ def _send_channel_dispatch(channel: models.AlertChannel, title: str, message: st
             green_id = (cfg.get('green_instance_id') or '').strip()
             green_token = (cfg.get('green_api_token') or '').strip()
             if green_id and green_token and phone:
+                try:
+                    state_url = f"https://api.green-api.com/waInstance{green_id}/getStateInstance/{green_token}"
+                    state_req = ur.Request(state_url, headers={'User-Agent': 'ThirdEye-Alert/2.0'})
+                    with ur.urlopen(state_req, timeout=8) as s_resp:
+                        state_data = json.loads(s_resp.read().decode('utf-8', errors='replace'))
+                        inst_state = state_data.get('stateInstance', 'unknown')
+                        if inst_state != 'authorized':
+                            return (
+                                'failed',
+                                401,
+                                f"WhatsApp not linked yet (state: {inst_state}). Click 'Link WhatsApp QR' on this channel card or scan the QR code inside console.green-api.com!"
+                            )
+                except Exception as state_err:
+                    return ('failed', 400, f"Green-API Instance check failed: {str(state_err)[:140]}")
+
                 phones = [re.sub(r'[^0-9]', '', p) for p in phone.split(',') if re.sub(r'[^0-9]', '', p)]
                 last_status, last_code, last_err = ('failed', 400, 'Invalid recipient phone number')
                 for clean_p in phones:

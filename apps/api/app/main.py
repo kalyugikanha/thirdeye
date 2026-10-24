@@ -2721,6 +2721,27 @@ def test_alert_channel(channel_id: int, db: Session = Depends(get_db), current_u
     res = alerts.test_single_channel(db, ch, current_user.organization_id)
     return res
 
+@app.get('/api/v1/alert-channels/{channel_id}/whatsapp-qr')
+def get_whatsapp_qr(channel_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    import urllib.request as ur, json
+    ch = db.query(models.AlertChannel).filter(models.AlertChannel.id == channel_id, models.AlertChannel.organization_id == current_user.organization_id).first()
+    if not ch: raise HTTPException(status_code=404, detail='Alert channel not found')
+    cfg = ch.config if isinstance(ch.config, dict) else {}
+    gid, gtok = (cfg.get('green_instance_id') or '').strip(), (cfg.get('green_api_token') or '').strip()
+    if not gid or not gtok: return {'error': 'Green-API Instance ID & Token not configured'}
+    try:
+        st_url = f'https://api.green-api.com/waInstance{gid}/getStateInstance/{gtok}'
+        with ur.urlopen(ur.Request(st_url, headers={'User-Agent': 'ThirdEye-Alert/2.0'}), timeout=8) as r:
+            st = json.loads(r.read().decode()).get('stateInstance', 'unknown')
+        if st == 'authorized': return {'state': 'authorized', 'qr_base64': None, 'message': 'WhatsApp is linked and authorized!'}
+        qr_url = f'https://api.green-api.com/waInstance{gid}/qr/{gtok}'
+        with ur.urlopen(ur.Request(qr_url, headers={'User-Agent': 'ThirdEye-Alert/2.0'}), timeout=10) as qr_r:
+            qr_data = json.loads(qr_r.read().decode())
+            if qr_data.get('type') == 'qrCode': return {'state': st, 'qr_base64': qr_data.get('message'), 'message': 'Scan this QR code from WhatsApp -> Linked Devices'}
+            return {'state': st, 'qr_base64': None, 'message': qr_data.get('message', 'Wait 5s and click Refresh QR')}
+    except Exception as e:
+        return {'state': 'error', 'qr_base64': None, 'error': str(e)}
+
 @app.delete('/api/v1/alert-channels/{channel_id}')
 def delete_alert_channel(channel_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     ch = db.query(models.AlertChannel).filter(
