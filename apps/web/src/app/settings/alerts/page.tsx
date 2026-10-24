@@ -106,8 +106,13 @@ export default function AlertChannelsPage() {
   const [smtpUser, setSmtpUser] = useState('');
   const [smtpPass, setSmtpPass] = useState('');
 
-  // WhatsApp CallMeBot state
+  // WhatsApp state (Green-API Free QR / Meta Cloud API / CallMeBot)
+  const [waMode, setWaMode] = useState<'green' | 'meta' | 'callmebot'>('green');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [greenInstanceId, setGreenInstanceId] = useState('');
+  const [greenApiToken, setGreenApiToken] = useState('');
+  const [metaPhoneId, setMetaPhoneId] = useState('');
+  const [metaAccessToken, setMetaAccessToken] = useState('');
   const [callmebotKey, setCallmebotKey] = useState('');
   const [copiedWaText, setCopiedWaText] = useState(false);
 
@@ -218,7 +223,13 @@ export default function AlertChannelsPage() {
         smtp_pass: smtpPass
       };
     } else if (type === 'whatsapp') {
-      cfg = { phone_number: phoneNumber, callmebot_api_key: callmebotKey };
+      if (waMode === 'green') {
+        cfg = { phone_number: phoneNumber, green_instance_id: greenInstanceId, green_api_token: greenApiToken };
+      } else if (waMode === 'meta') {
+        cfg = { phone_number: phoneNumber, meta_phone_number_id: metaPhoneId, meta_access_token: metaAccessToken };
+      } else {
+        cfg = { phone_number: phoneNumber, callmebot_api_key: callmebotKey };
+      }
     } else if (type === 'pagerduty') {
       cfg = { routing_key: routingKey };
     } else if (type === 'webhook') {
@@ -446,26 +457,11 @@ export default function AlertChannelsPage() {
                       )}
                       {type === 'whatsapp' && (
                         <div className="space-y-1.5">
-                          <p className="font-bold text-slate-900">CallMeBot Free WhatsApp Setup (Takes 30 Seconds):</p>
+                          <p className="font-bold text-slate-900">Free WhatsApp Alert Setup (Green-API Free QR — Recommended):</p>
                           <ol className="list-decimal pl-5 space-y-1 text-slate-600">
-                            <li>Add <strong>+34 644 51 95 23</strong> to your phone contacts (name it <em>ThirdEye Bot</em>).</li>
-                            <li className="flex items-center gap-2 flex-wrap">
-                              <span>Send this exact WhatsApp message to that contact:</span>
-                              <code className="bg-white px-2 py-0.5 rounded border border-slate-200 font-mono text-slate-900">I allow callmebot to send me messages</code>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  navigator.clipboard.writeText('I allow callmebot to send me messages');
-                                  setCopiedWaText(true);
-                                  setTimeout(() => setCopiedWaText(false), 2000);
-                                }}
-                                className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-800 cursor-pointer"
-                              >
-                                {copiedWaText ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                <span>{copiedWaText ? 'Copied' : 'Copy Text'}</span>
-                              </button>
-                            </li>
-                            <li>The bot will reply on WhatsApp within 10 seconds with your 6-digit <strong>API Key</strong>. Paste your phone number and that API Key below!</li>
+                            <li>Open <a href="https://console.green-api.com" target="_blank" rel="noreferrer" className="text-blue-600 underline font-semibold">console.green-api.com</a> &rarr; Create a <strong>Free Developer Instance</strong> ($0/month).</li>
+                            <li>Scan the QR Code from your WhatsApp (Linked Devices) and copy your <strong>idInstance</strong> &amp; <strong>apiTokenInstance</strong> below.</li>
+                            <li className="text-amber-700 font-medium">Note: CallMeBot&apos;s public WhatsApp bot (+34 644 51 95 23) currently has its free slots full on CallMeBot&apos;s server, so new keys are not being issued by CallMeBot right now. Use Green-API Free QR or Meta Cloud API instead!</li>
                           </ol>
                         </div>
                       )}
@@ -646,33 +642,119 @@ export default function AlertChannelsPage() {
                   )}
 
                   {type === 'whatsapp' && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-emerald-50/40 p-4 rounded-2xl border border-emerald-200/70">
+                    <div className="space-y-4 bg-emerald-50/40 p-4 rounded-2xl border border-emerald-200/70">
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { id: 'green', label: 'Green-API (Free QR Scan — Recommended)' },
+                          { id: 'meta', label: 'Meta Official Cloud API' },
+                          { id: 'callmebot', label: 'CallMeBot (Legacy)' },
+                        ].map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => setWaMode(m.id as 'green' | 'meta' | 'callmebot')}
+                            className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer border ${
+                              waMode === m.id
+                                ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                                : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-300'
+                            }`}
+                          >
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+
                       <div>
                         <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                          WhatsApp Phone Number (with Country Code)
+                          Recipient WhatsApp Number(s) (with Country Code, comma-separated supported)
                         </label>
                         <input
                           type="text"
                           required
-                          placeholder="e.g. +919876543210"
+                          placeholder="e.g. +919694896933, +919876543210"
                           value={phoneNumber}
                           onChange={(e) => setPhoneNumber(e.target.value)}
                           className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-mono text-slate-900 bg-white focus:outline-none focus:border-blue-500"
                         />
                       </div>
-                      <div>
-                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
-                          CallMeBot 6-Digit API Key
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          placeholder="e.g. 123456 (received on WhatsApp)"
-                          value={callmebotKey}
-                          onChange={(e) => setCallmebotKey(e.target.value)}
-                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-mono text-slate-900 bg-white focus:outline-none focus:border-blue-500"
-                        />
-                      </div>
+
+                      {waMode === 'green' && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+                              Green-API Instance ID (idInstance)
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="e.g. 7103948571"
+                              value={greenInstanceId}
+                              onChange={(e) => setGreenInstanceId(e.target.value)}
+                              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-mono text-slate-900 bg-white focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+                              Green-API Token (apiTokenInstance)
+                            </label>
+                            <input
+                              type="password"
+                              required
+                              placeholder="Paste apiTokenInstance from console.green-api.com"
+                              value={greenApiToken}
+                              onChange={(e) => setGreenApiToken(e.target.value)}
+                              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-mono text-slate-900 bg-white focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {waMode === 'meta' && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+                              Meta Phone Number ID
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="e.g. 10592837465"
+                              value={metaPhoneId}
+                              onChange={(e) => setMetaPhoneId(e.target.value)}
+                              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-mono text-slate-900 bg-white focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+                              Meta Permanent / System Access Token
+                            </label>
+                            <input
+                              type="password"
+                              required
+                              placeholder="EAAG..."
+                              value={metaAccessToken}
+                              onChange={(e) => setMetaAccessToken(e.target.value)}
+                              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-mono text-slate-900 bg-white focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {waMode === 'callmebot' && (
+                        <div>
+                          <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1.5">
+                            CallMeBot 6-Digit API Key
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            placeholder="e.g. 123456 (received from CallMeBot)"
+                            value={callmebotKey}
+                            onChange={(e) => setCallmebotKey(e.target.value)}
+                            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-mono text-slate-900 bg-white focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
 

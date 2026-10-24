@@ -47,7 +47,10 @@ EMOJI_MAP = {
     'info': 'ℹ️'
 }
 
-SECRET_KEYS = {'bot_token', 'smtp_pass', 'callmebot_api_key', 'secret_token', 'auth_token', 'routing_key'}
+SECRET_KEYS = {
+    'bot_token', 'smtp_pass', 'callmebot_api_key', 'secret_token',
+    'auth_token', 'routing_key', 'green_api_token', 'meta_access_token'
+}
 
 
 def mask_channel_config(config: dict) -> dict:
@@ -395,21 +398,67 @@ def _send_channel_dispatch(channel: models.AlertChannel, title: str, message: st
                 logger.warning(f"Hostinger/SMTP send failed: {smtp_err}")
                 return ('failed', 500, f"SMTP Error ({smtp_host}:{smtp_port}): {str(smtp_err)[:160]}")
 
-        # 7. WHATSAPP / SMS (CallMeBot or Twilio)
+        # 7. WHATSAPP / SMS (Green-API Free QR / Meta Cloud API / CallMeBot / Twilio)
         elif ch_type in ('whatsapp', 'sms'):
+            import re
             phone = (cfg.get('phone_number') or cfg.get('to_number') or '').strip()
-            callmebot_key = (cfg.get('callmebot_api_key') or '').strip()
+            msg_text = f"{emoji} *ThirdEye Alert*\n\n*{title}*\n{message}\n\n🔗 https://thirdeye.colladome.com/alerts"
 
+            # 7a. Green-API (100% Free Developer Plan — Scan QR code from WhatsApp)
+            green_id = (cfg.get('green_instance_id') or '').strip()
+            green_token = (cfg.get('green_api_token') or '').strip()
+            if green_id and green_token and phone:
+                phones = [re.sub(r'[^0-9]', '', p) for p in phone.split(',') if re.sub(r'[^0-9]', '', p)]
+                last_status, last_code, last_err = ('failed', 400, 'Invalid recipient phone number')
+                for clean_p in phones:
+                    green_url = f"https://api.green-api.com/waInstance{green_id}/sendMessage/{green_token}"
+                    payload_bytes = json.dumps({
+                        "chatId": f"{clean_p}@c.us",
+                        "message": msg_text
+                    }).encode('utf-8')
+                    req = ur.Request(green_url, data=payload_bytes, method='POST', headers={
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'ThirdEye-Alert/2.0'
+                    })
+                    last_status, last_code, last_err = _http_send_with_retry(req, timeout=12)
+                return (last_status, last_code, None if last_status == 'delivered' else last_err)
+
+            # 7b. Meta Official WhatsApp Cloud API (Free 1,000 service conversations/mo)
+            meta_phone_id = (cfg.get('meta_phone_number_id') or '').strip()
+            meta_token = (cfg.get('meta_access_token') or '').strip()
+            if meta_phone_id and meta_token and phone:
+                clean_p = re.sub(r'[^0-9]', '', phone.split(',')[0])
+                meta_url = f"https://graph.facebook.com/v19.0/{meta_phone_id}/messages"
+                payload_bytes = json.dumps({
+                    "messaging_product": "whatsapp",
+                    "to": clean_p,
+                    "type": "text",
+                    "text": {"preview_url": False, "body": msg_text}
+                }).encode('utf-8')
+                req = ur.Request(meta_url, data=payload_bytes, method='POST', headers={
+                    'Authorization': f'Bearer {meta_token}',
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'ThirdEye-Alert/2.0'
+                })
+                status, code, body_or_err = _http_send_with_retry(req, timeout=12)
+                return (status, code, None if status == 'delivered' else body_or_err)
+
+            # 7c. CallMeBot API
+            callmebot_key = (cfg.get('callmebot_api_key') or '').strip()
             if callmebot_key and phone:
-                clean_phone = phone.replace('+', '').replace(' ', '').replace('-', '')
-                msg_text = f"{emoji} *ThirdEye Alert*\n\n*{title}*\n{message}\n\nhttps://thirdeye.colladome.com/alerts"
+                clean_phone = re.sub(r'[^0-9]', '', phone.split(',')[0])
                 cm_url = f"https://api.callmebot.com/whatsapp.php?phone={clean_phone}&text={up.quote(msg_text)}&apikey={callmebot_key}"
                 req = ur.Request(cm_url, headers={'User-Agent': 'ThirdEye-Alert/2.0'})
                 status, code, body_or_err = _http_send_with_retry(req, timeout=12)
                 if status == 'delivered' and body_or_err and ('invalid' in body_or_err.lower() or 'error' in body_or_err.lower()):
-                    return ('failed', 400, f"CallMeBot Error: {body_or_err[:140]}")
+                    clean_err = re.sub(r'<[^>]+>', ' ', body_or_err)
+                    clean_err = re.sub(r'\s+', ' ', clean_err).strip()
+                    if 'APIKey is invalid' in clean_err:
+                        clean_err = 'CallMeBot APIKey is invalid (Note: CallMeBot public WhatsApp bot slots are currently full — switch to Green-API Free QR or Telegram).'
+                    return ('failed', 400, f"CallMeBot Error: {clean_err[-180:]}")
                 return (status, code, None if status == 'delivered' else body_or_err)
 
+            # 7d. Twilio WhatsApp / SMS
             account_sid = cfg.get('account_sid')
             auth_token = cfg.get('auth_token')
             from_number = cfg.get('from_number')
@@ -434,7 +483,7 @@ def _send_channel_dispatch(channel: models.AlertChannel, title: str, message: st
                 status, code, err_or_body = _http_send_with_retry(req, timeout=10)
                 return (status, code, None if status == 'delivered' else err_or_body)
 
-            return ('failed', 400, 'Missing WhatsApp credentials: Provide Phone Number and CallMeBot API Key')
+            return ('failed', 400, 'Missing WhatsApp credentials: Provide Green-API (Instance ID + Token), Meta Cloud API, or CallMeBot Key')
 
         # 8. CUSTOM SIGNED WEBHOOK
         else:
