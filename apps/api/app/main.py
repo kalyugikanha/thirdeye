@@ -19,7 +19,7 @@ import io
 from dotenv import load_dotenv
 load_dotenv()  # Load .env file so GEMINI_API_KEY is available
 from app.database import engine, Base, get_db, SessionLocal
-from app import models, auth, enterprise, growth, intelligence
+from app import models, auth, enterprise, growth, intelligence, phase2_internal
 from pydantic import BaseModel
 try:
     import email_validator
@@ -43,6 +43,7 @@ STORAGE_DIR_ROOT.mkdir(parents=True, exist_ok=True)
 models.Base.metadata.create_all(bind=engine)
 
 def safe_migrate_sqlite_schema():
+    phase2_internal.migrate_phase2_schema(engine)
     migration_sqls = [
         "ALTER TABLE projects ADD COLUMN dns_verified BOOLEAN DEFAULT 0",
         "ALTER TABLE projects ADD COLUMN dns_token TEXT",
@@ -135,6 +136,7 @@ app = FastAPI(title='ThirdEye AI Workspace API')
 app.include_router(enterprise.router)
 app.include_router(growth.router)
 app.include_router(intelligence.router)
+app.include_router(phase2_internal.router)
 
 @app.middleware("http")
 async def cors_middleware(request: Request, call_next):
@@ -479,6 +481,11 @@ class EventCreate(BaseModel):
     url: str
     referrer: Optional[str] = ""
     session_id: str
+    user_id: Optional[str] = None
+    user_email: Optional[str] = None
+    user_name: Optional[str] = None
+    user_role: Optional[str] = None
+    app_version: Optional[str] = None
     properties: Optional[Dict[str, Any]] = None
 
 @app.post('/api/v1/track')
@@ -490,9 +497,16 @@ def track_event(event: EventCreate, request: Request, db: Session = Depends(get_
     project = db.query(models.Project).filter(models.Project.api_key == key.strip()).first()
     if not project:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API key")
+    props = event.properties or {}
     db_event = models.Event(
         project_id=project.id, event_type=event.event_type, url=event.url, referrer=event.referrer or "",
-        session_id=event.session_id, properties=event.properties
+        session_id=event.session_id,
+        user_id=event.user_id or props.get("user_id"),
+        user_email=event.user_email or props.get("user_email"),
+        user_name=event.user_name or props.get("user_name"),
+        user_role=event.user_role or props.get("user_role"),
+        app_version=event.app_version or props.get("app_version"),
+        properties=event.properties
     )
     db.add(db_event)
     db.commit()
@@ -552,6 +566,11 @@ class RecordingPayload(BaseModel):
     events: Optional[List[Any]] = None
     url: Optional[str] = None
     referrer: Optional[str] = None
+    user_id: Optional[str] = None
+    user_email: Optional[str] = None
+    user_name: Optional[str] = None
+    user_role: Optional[str] = None
+    app_version: Optional[str] = None
     meta: Optional[Dict[str, Any]] = None
 
 @app.post('/api/v1/recordings')
@@ -707,11 +726,23 @@ def create_or_append_recording(payload: RecordingPayload, request: Request, db: 
 
     relative_path = f"storage/recordings/{file_name}"
 
+    meta_dict = payload.meta or {}
+    rec_uid = payload.user_id or meta_dict.get("user_id")
+    rec_email = payload.user_email or meta_dict.get("user_email")
+    rec_name = payload.user_name or meta_dict.get("user_name")
+    rec_role = payload.user_role or meta_dict.get("user_role")
+    rec_ver = payload.app_version or meta_dict.get("app_version")
+
     if existing_rec:
         if resolved_project_id is not None:
             existing_rec.project_id = resolved_project_id
         existing_rec.duration = calc_duration
         existing_rec.file_path = relative_path
+        if rec_uid: existing_rec.user_id = rec_uid
+        if rec_email: existing_rec.user_email = rec_email
+        if rec_name: existing_rec.user_name = rec_name
+        if rec_role: existing_rec.user_role = rec_role
+        if rec_ver: existing_rec.app_version = rec_ver
         db.commit()
         db.refresh(existing_rec)
     else:
@@ -720,6 +751,11 @@ def create_or_append_recording(payload: RecordingPayload, request: Request, db: 
             project_id=resolved_project_id,
             duration=calc_duration,
             file_path=relative_path,
+            user_id=rec_uid,
+            user_email=rec_email,
+            user_name=rec_name,
+            user_role=rec_role,
+            app_version=rec_ver,
             created_at=datetime.utcnow()
         )
         db.add(new_rec)
@@ -789,6 +825,10 @@ def list_recordings(
             "browser": client_meta.get("browser", "Chrome"),
             "os": client_meta.get("os", "Windows"),
             "screen": client_meta.get("screen", "1920x1080"),
+            "user_id": getattr(r, "user_id", None) or client_meta.get("user_id"),
+            "user_email": getattr(r, "user_email", None) or client_meta.get("user_email"),
+            "user_name": getattr(r, "user_name", None) or client_meta.get("user_name"),
+            "user_role": getattr(r, "user_role", None) or client_meta.get("user_role"),
             "event_count": max(event_count, 1)
         })
     return results
@@ -3283,11 +3323,14 @@ def verify_domain_dns(data: Optional[VerifyDNSRequest] = None, db: Session = Dep
 class APMReportPayload(BaseModel):
     api_key: str
     service_name: Optional[str] = "web-backend"
+    trace_type: Optional[str] = "http"
     endpoint: str
     method: Optional[str] = "GET"
     status_code: Optional[int] = 200
     duration_ms: Optional[int] = 50
     error_detail: Optional[str] = None
+    user_id: Optional[str] = None
+    app_version: Optional[str] = None
 
 @app.post('/api/v1/apm/report')
 def report_apm_metric(payload: APMReportPayload, request: Request, db: Session = Depends(get_db)):
@@ -3300,11 +3343,14 @@ def report_apm_metric(payload: APMReportPayload, request: Request, db: Session =
     trace = models.APMTrace(
         project_id=proj.id,
         service_name=payload.service_name or "web-backend",
+        trace_type=payload.trace_type or "http",
         endpoint=payload.endpoint,
         method=payload.method or "GET",
         status_code=payload.status_code or 200,
         duration_ms=payload.duration_ms or 50,
-        error_detail=payload.error_detail
+        error_detail=payload.error_detail,
+        user_id=payload.user_id,
+        app_version=payload.app_version
     )
     db.add(trace)
     db.commit()

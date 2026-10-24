@@ -4,13 +4,33 @@
                document.querySelector('script[data-key]') ||
                document.querySelector('script[src*="te.js"]');
   var apiKey = script ? script.getAttribute('data-key') : '';
+  var maskAllInputsAttr = script ? script.getAttribute('data-mask-all') === 'true' : false;
+  var customEndpointAttr = script ? script.getAttribute('data-endpoint') : '';
+  var appVersionAttr = script ? (script.getAttribute('data-app-version') || '') : '';
   var apiHost = 'http://localhost:8000';
-  if (script && script.src) {
+  if (customEndpointAttr) {
+    apiHost = customEndpointAttr.replace(/\/$/, '');
+  } else if (script && script.src) {
     try {
       apiHost = new URL(script.src).origin;
     } catch (e) {
       apiHost = 'http://localhost:8000';
     }
+  }
+
+  // Identified User / Employee state (Phase 2 Internal Portals & Apps)
+  var identifiedUser = {};
+  try {
+    var rawIdent = localStorage.getItem('te_identity');
+    if (rawIdent) identifiedUser = JSON.parse(rawIdent) || {};
+  } catch (e) {}
+
+  function redactPII(str) {
+    if (!str || typeof str !== 'string') return str;
+    return str
+      .replace(/\b[A-Z]{5}[0-9]{4}[A-Z]\b/g, '[PAN-REDACTED]')
+      .replace(/\b\d{4}\s\d{4}\s\d{4}\b/g, '[AADHAAR-REDACTED]')
+      .replace(/\b(?:\d[ -]*?){13,19}\b/g, '[CARD-REDACTED]');
   }
 
   // 2. Persistent session identifier with 30-minute inactivity expiration & 2-minute idle pause
@@ -259,15 +279,19 @@
           mouseInteraction: true,
           scroll: 150
         },
-        // Sensible privacy masking: Only mask password inputs or elements explicitly marked with .te-mask
-        maskAllInputs: false,
+        // Enterprise privacy masking: supports data-mask-all="true", .te-mask, [data-te-block], and PII regex redaction
+        maskAllInputs: maskAllInputsAttr,
         maskInputOptions: {
           password: true
         },
+        blockSelector: '[data-te-block], .te-block',
         maskTextSelector: '.te-mask, [data-te-mask]',
         maskTextFn: function(text, el) {
           if (!text || !text.trim()) return text;
-          return '••••••';
+          if (el && (el.classList.contains('te-mask') || el.hasAttribute('data-te-mask'))) {
+            return '••••••';
+          }
+          return redactPII(text);
         }
       });
 
@@ -412,7 +436,13 @@
       referrer: ref,
       traffic_source: refSource,
       ad_channel: adChannel,
-      search_keyword: searchKeyword
+      search_keyword: searchKeyword,
+      user_id: identifiedUser.user_id || null,
+      user_email: identifiedUser.user_email || null,
+      user_name: identifiedUser.user_name || null,
+      user_role: identifiedUser.user_role || null,
+      department: identifiedUser.department || null,
+      app_version: appVersionAttr || identifiedUser.app_version || null
     };
   }
 
@@ -429,6 +459,11 @@
         url: window.location.href,
         referrer: document.referrer || '',
         session_id: sessionId,
+        user_id: mergedProps.user_id || null,
+        user_email: mergedProps.user_email || null,
+        user_name: mergedProps.user_name || null,
+        user_role: mergedProps.user_role || null,
+        app_version: mergedProps.app_version || null,
         properties: mergedProps
       })
     }).catch(function(err) {
@@ -436,8 +471,31 @@
     });
   }
 
-  // Automatically track initial pageview
+  // Automatically track initial pageview + SPA route changes (React / Next.js / Vue internal portals)
+  var lastTrackedHref = window.location.href;
   track('pageview');
+
+  function checkSpaRouteChange() {
+    if (window.location.href !== lastTrackedHref) {
+      lastTrackedHref = window.location.href;
+      track('pageview', { spa_navigation: true });
+    }
+  }
+  try {
+    var origPushState = history.pushState;
+    history.pushState = function() {
+      var ret = origPushState.apply(this, arguments);
+      setTimeout(checkSpaRouteChange, 50);
+      return ret;
+    };
+    var origReplaceState = history.replaceState;
+    history.replaceState = function() {
+      var ret = origReplaceState.apply(this, arguments);
+      setTimeout(checkSpaRouteChange, 50);
+      return ret;
+    };
+    window.addEventListener('popstate', checkSpaRouteChange);
+  } catch (e) {}
 
   // Detect Search Query from URL parameters on page load
   try {
@@ -913,9 +971,104 @@
 
   console.log('[ThirdEye] Full-stack observability active for project:', apiKey, 'via:', apiHost);
 
+  function identify(userId, traits) {
+    if (!userId) return;
+    var t = traits || {};
+    identifiedUser = {
+      user_id: String(userId),
+      user_email: t.email || t.user_email || '',
+      user_name: t.name || t.user_name || '',
+      user_role: t.role || t.user_role || '',
+      department: t.department || '',
+      portal: t.portal || '',
+      app_version: t.app_version || appVersionAttr || ''
+    };
+    try {
+      localStorage.setItem('te_identity', JSON.stringify(identifiedUser));
+    } catch (e) {}
+    track('user_identified', identifiedUser);
+  }
+
+  function resetIdentity() {
+    flushRecordings();
+    identifiedUser = {};
+    try {
+      localStorage.removeItem('te_identity');
+      sessionId = Math.random().toString(36).substring(2) + Date.now().toString(36);
+      localStorage.setItem('te_session', sessionId);
+    } catch (e) {}
+  }
+
+  function auditAction(action, details) {
+    if (!action || !apiKey) return;
+    var d = details || {};
+    fetch(apiHost + '/api/v1/internal/audit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: apiKey,
+        session_id: sessionId,
+        user_id: identifiedUser.user_id || d.user_id || null,
+        user_email: identifiedUser.user_email || d.user_email || null,
+        user_name: identifiedUser.user_name || d.user_name || null,
+        user_role: identifiedUser.user_role || d.user_role || null,
+        department: identifiedUser.department || d.department || null,
+        action: action,
+        target_resource: d.target || d.target_resource || window.location.pathname,
+        risk_level: d.risk_level || 'low',
+        metadata: d
+      })
+    }).catch(function() {});
+  }
+
+  function trackScreen(screenName, props) {
+    if (!screenName || !apiKey) return;
+    var p = props || {};
+    fetch(apiHost + '/api/v1/app/telemetry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: apiKey,
+        type: 'screen_view',
+        session_id: sessionId,
+        user_id: identifiedUser.user_id || p.user_id || null,
+        user_email: identifiedUser.user_email || p.user_email || null,
+        platform: p.platform || 'web',
+        app_version: p.app_version || appVersionAttr || '1.0.0',
+        screen_name: screenName,
+        properties: p
+      })
+    }).catch(function() {});
+  }
+
+  function reportCrash(message, stackTrace, errorType) {
+    if (!message || !apiKey) return;
+    fetch(apiHost + '/api/v1/app/telemetry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: apiKey,
+        type: errorType || 'crash',
+        session_id: sessionId,
+        user_id: identifiedUser.user_id || null,
+        user_email: identifiedUser.user_email || null,
+        platform: 'web',
+        app_version: appVersionAttr || '1.0.0',
+        screen_name: window.location.pathname,
+        message: message,
+        stack_trace: stackTrace || ''
+      })
+    }).catch(function() {});
+  }
+
   // Expose to window
   window.ThirdEye = {
     track: track,
+    identify: identify,
+    reset: resetIdentity,
+    audit: auditAction,
+    trackScreen: trackScreen,
+    reportCrash: reportCrash,
     getSessionId: function() { return sessionId; },
     getVariant: function(key) { return assignedVariants[key] || 'A'; },
     flush: flushRecordings

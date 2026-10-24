@@ -56,12 +56,17 @@ interface SessionRecording {
   browser?: string;
   os?: string;
   screen?: string;
+  user_id?: string | null;
+  user_email?: string | null;
+  user_name?: string | null;
+  user_role?: string | null;
   event_count?: number;
 }
 
 export default function SessionsPage() {
   const router = useRouter();
   const [recordings, setRecordings] = useState<SessionRecording[]>([]);
+  const [userSearch, setUserSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -462,7 +467,30 @@ export default function SessionsPage() {
               </div>
             ) : (
               <div className="space-y-4">
-                {recordings.map((rec) => (
+                <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between gap-3">
+                  <input
+                    type="text"
+                    placeholder="Filter replays by Employee Email, User ID, Role, Session ID, or Entry URL..."
+                    value={userSearch}
+                    onChange={(e) => setUserSearch(e.target.value)}
+                    className="w-full text-xs text-slate-900 focus:outline-none px-2"
+                  />
+                  {userSearch && (
+                    <button
+                      onClick={() => setUserSearch('')}
+                      className="text-[11px] font-bold text-slate-400 hover:text-slate-700 cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+
+                {recordings.filter((rec) => {
+                  if (!userSearch.trim()) return true;
+                  const q = userSearch.toLowerCase();
+                  const hay = `${rec.session_id} ${rec.entry_url || ''} ${rec.user_email || ''} ${rec.user_id || ''} ${rec.user_name || ''} ${rec.user_role || ''}`.toLowerCase();
+                  return hay.includes(q);
+                }).map((rec) => (
                   <div
                     key={rec.id}
                     className="p-5 rounded-3xl bg-white border border-slate-200/60 shadow-sm hover:shadow-md transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 group"
@@ -477,6 +505,11 @@ export default function SessionsPage() {
                           <span className="text-sm font-black text-slate-900 font-mono tracking-tight">
                             {rec.session_id}
                           </span>
+                          {(rec.user_email || rec.user_id) && (
+                            <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 px-2.5 py-0.5 rounded-full">
+                              👤 {rec.user_name || rec.user_email || rec.user_id} {rec.user_role ? `• ${rec.user_role}` : ''}
+                            </span>
+                          )}
                           <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-full flex items-center gap-1">
                             <ShieldCheck className="w-3 h-3 text-emerald-600" />
                             Client CSS Inlined & Masked

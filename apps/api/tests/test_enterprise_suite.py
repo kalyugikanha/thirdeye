@@ -281,3 +281,91 @@ def test_10_phase1_5_masking_and_hostinger_validation(client):
     assert "Hostinger SMTP credentials required" in (test_res["error"] or "")
 
 
+# -------------------------------------------------------------- 6. phase 2 (internal portals + mobile apps)
+def test_11_phase2_identify_internal_audit_and_mobile_app_telemetry(client):
+    headers, pid, key, domain = register_tenant(client, "phase2-portal.com")
+
+    # 1. Track identified employee event + recording
+    r1 = client.post("/api/v1/collect", json={
+        "api_key": key,
+        "session_id": "emp_sess_1",
+        "event_type": "pageview",
+        "url": f"https://{domain}/admin/payroll",
+        "user_id": "emp_501",
+        "user_email": f"rahul@{domain}",
+        "user_name": "Rahul Verma",
+        "user_role": "Finance_Admin",
+        "properties": {"department": "Finance"}
+    })
+    assert r1.status_code == 200
+
+    # 2. Record a high-risk internal audit action
+    aud = client.post("/api/v1/internal/audit", json={
+        "api_key": key,
+        "session_id": "emp_sess_1",
+        "user_id": "emp_501",
+        "user_email": f"rahul@{domain}",
+        "user_name": "Rahul Verma",
+        "user_role": "Finance_Admin",
+        "department": "Finance",
+        "action": "export_payroll_csv",
+        "target_resource": "payroll_2026_q4.csv",
+        "risk_level": "critical"
+    })
+    assert aud.status_code == 200 and aud.json()["risk_level"] == "critical"
+
+    # Verify /api/v1/internal/overview returns the identified employee and the critical audit log
+    ov = client.get("/api/v1/internal/overview", headers=headers).json()
+    assert ov["kpis"]["total_identified_users"] == 1
+    assert ov["kpis"]["high_risk_actions"] == 1
+    assert ov["identified_users"][0]["user_email"] == f"rahul@{domain}"
+    assert ov["audit_logs"][0]["action"] == "export_payroll_csv"
+
+    # 3. Mobile App Telemetry (React Native screen_view + crash)
+    s_res = client.post("/api/v1/app/telemetry", json={
+        "api_key": key,
+        "type": "screen_view",
+        "session_id": "rn_sess_99",
+        "user_id": "mob_u1",
+        "user_email": f"appuser@{domain}",
+        "platform": "react_native",
+        "app_version": "3.1.0",
+        "device_model": "iPhone 15 Pro",
+        "screen_name": "CheckoutScreen"
+    })
+    assert s_res.status_code == 200
+
+    c_res = client.post("/api/v1/app/telemetry", json={
+        "api_key": key,
+        "type": "crash",
+        "session_id": "rn_sess_99",
+        "user_id": "mob_u1",
+        "user_email": f"appuser@{domain}",
+        "platform": "react_native",
+        "app_version": "3.1.0",
+        "device_model": "iPhone 15 Pro",
+        "screen_name": "CheckoutScreen",
+        "message": "NullPointerException in PaymentBridge",
+        "stack_trace": "at CheckoutScreen.pay (CheckoutScreen.tsx:88)"
+    })
+    assert c_res.status_code == 200 and c_res.json()["crash_id"] is not None
+
+    app_ov = client.get("/api/v1/app/overview", headers=headers).json()
+    assert app_ov["kpis"]["total_crashes"] == 1
+    assert app_ov["versions"][0]["version"] == "3.1.0"
+    assert app_ov["crashes"][0]["message"] == "NullPointerException in PaymentBridge"
+
+    # 4. Multi-application registration
+    new_app = client.post("/api/v1/applications", headers=headers, json={
+        "name": "Internal HR Portal",
+        "domain": f"hr.{domain}",
+        "app_type": "internal_portal",
+        "platform": "browser",
+        "mask_all_inputs": True
+    })
+    assert new_app.status_code == 200
+    apps_list = client.get("/api/v1/applications", headers=headers).json()
+    assert len(apps_list) == 2 and any(a["app_type"] == "internal_portal" and a["mask_all_inputs"] is True for a in apps_list)
+
+
+

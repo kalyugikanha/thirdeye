@@ -47,6 +47,9 @@ class Project(Base):
     api_key = Column(String, unique=True, index=True)
     dns_verified = Column(Boolean, default=False)
     dns_token = Column(String, nullable=True)
+    app_type = Column(String, default='web')           # 'web', 'internal_portal', 'mobile_app', 'backend_api'
+    platform = Column(String, default='browser')       # 'browser', 'react_native', 'flutter', 'android', 'ios', 'nodejs', 'python'
+    mask_all_inputs = Column(Boolean, default=False)
     organization_id = Column(Integer, ForeignKey('organizations.id'))
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -77,10 +80,15 @@ class Event(Base):
     )
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey('projects.id'), index=True)
-    event_type = Column(String, index=True) # e.g., 'pageview', 'click'
+    event_type = Column(String, index=True) # e.g., 'pageview', 'click', 'screen_view', 'app_crash'
     url = Column(String)
     referrer = Column(String, nullable=True)
     session_id = Column(String, index=True)
+    user_id = Column(String, index=True, nullable=True)
+    user_email = Column(String, index=True, nullable=True)
+    user_name = Column(String, nullable=True)
+    user_role = Column(String, nullable=True)
+    app_version = Column(String, nullable=True)
     properties = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
@@ -96,6 +104,11 @@ class SessionRecording(Base):
     project_id = Column(Integer, ForeignKey('projects.id'), index=True, nullable=True)
     duration = Column(Integer, default=0)
     file_path = Column(String, nullable=False)
+    user_id = Column(String, index=True, nullable=True)
+    user_email = Column(String, index=True, nullable=True)
+    user_name = Column(String, nullable=True)
+    user_role = Column(String, nullable=True)
+    app_version = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     project = relationship('Project', back_populates='recordings')
@@ -199,11 +212,14 @@ class APMTrace(Base):
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey('projects.id'), index=True)
     service_name = Column(String, default='web-backend')
+    trace_type = Column(String, default='http')        # 'http', 'db_query', 'external_api', 'worker_job'
     endpoint = Column(String, index=True)
     method = Column(String, default='GET')
     status_code = Column(Integer, default=200)
     duration_ms = Column(Integer, default=0)
     error_detail = Column(String, nullable=True)
+    user_id = Column(String, nullable=True)
+    app_version = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship('Project', back_populates='apm_traces')
@@ -354,5 +370,46 @@ class NetworkRequest(Base):
     method = Column(String, default='GET')
     status_code = Column(Integer, index=True)
     duration_ms = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    project = relationship('Project')
+
+
+class InternalAuditLog(Base):
+    __tablename__ = 'internal_audit_logs'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    session_id = Column(String, index=True, nullable=True)
+    user_id = Column(String, index=True, nullable=True)
+    user_email = Column(String, index=True, nullable=True)
+    user_name = Column(String, nullable=True)
+    user_role = Column(String, nullable=True)
+    department = Column(String, nullable=True)
+    action = Column(String, index=True)               # e.g., 'export_csv', 'delete_record', 'role_change'
+    target_resource = Column(String, nullable=True)   # e.g., 'customers_table (12,500 rows)'
+    risk_level = Column(String, default='low')        # 'low', 'medium', 'high', 'critical'
+    ip_address = Column(String, nullable=True)
+    metadata_json = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    project = relationship('Project')
+
+
+class AppCrashLog(Base):
+    __tablename__ = 'app_crash_logs'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    session_id = Column(String, index=True, nullable=True)
+    user_id = Column(String, index=True, nullable=True)
+    user_email = Column(String, index=True, nullable=True)
+    platform = Column(String, default='react_native') # 'react_native', 'flutter', 'android', 'ios', 'web'
+    app_version = Column(String, default='1.0.0')
+    os_version = Column(String, nullable=True)
+    device_model = Column(String, nullable=True)
+    error_type = Column(String, default='crash')      # 'crash', 'anr', 'unhandled_exception'
+    message = Column(String)
+    stack_trace = Column(Text, nullable=True)
+    screen_name = Column(String, nullable=True)
+    memory_free_mb = Column(Integer, nullable=True)
+    battery_pct = Column(Integer, nullable=True)
+    network_type = Column(String, default='wifi')     # 'wifi', '5g', '4g', 'offline'
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     project = relationship('Project')

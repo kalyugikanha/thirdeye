@@ -74,6 +74,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/analytics/forms', icon: ClipboardList, title: 'Form Analytics', badge: 'CRO' },
       { href: '/analytics/experiments', icon: FlaskConical, title: 'A/B Experiments', badge: 'Split' },
       { href: '/analytics/feedback', icon: Smile, title: 'Customer Feedback', badge: 'CSAT' },
+      { href: '/analytics/internal', icon: ShieldCheck, title: 'Internal & App Tracker', badge: 'Portal+App' },
     ]
   },
   {
@@ -83,6 +84,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/devops', icon: Cpu, title: 'Server APM & APIs' },
       { href: '/devops/network', icon: WifiOff, title: 'Network & API Inspector', badge: 'XHR' },
       { href: '/devops/releases', icon: Rocket, title: 'Release Impact Tracker', badge: 'CI/CD' },
+      { href: '/settings/applications', icon: Code2, title: 'Apps & Mobile SDKs', badge: 'SDKs' },
       { href: '/uptime', icon: Activity, title: 'Uptime & SSL' },
       { href: '/seo', icon: Search, title: 'SEO & Performance' },
     ]
