@@ -46,6 +46,10 @@ interface Channel {
     smtp_pass?: string;
     phone_number?: string;
     callmebot_api_key?: string;
+    green_instance_id?: string;
+    green_api_token?: string;
+    meta_phone_number_id?: string;
+    meta_access_token?: string;
     routing_key?: string;
     secret_token?: string;
   };
