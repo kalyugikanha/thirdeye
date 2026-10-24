@@ -49,6 +49,7 @@ def safe_migrate_sqlite_schema():
         "ALTER TABLE projects ADD COLUMN dns_token TEXT",
         "ALTER TABLE organizations ADD COLUMN plan TEXT DEFAULT 'Pro'",
         "ALTER TABLE organizations ADD COLUMN monthly_event_limit INTEGER DEFAULT 100000",
+        "ALTER TABLE organizations ADD COLUMN storage_quota_mb INTEGER DEFAULT 5120",
         "ALTER TABLE uptime_monitors ADD COLUMN http_method TEXT DEFAULT 'GET'",
         "ALTER TABLE uptime_monitors ADD COLUMN headers JSON DEFAULT '{}'",
         "ALTER TABLE uptime_monitors ADD COLUMN request_body TEXT",
@@ -71,7 +72,16 @@ def safe_migrate_sqlite_schema():
             response_code INTEGER,
             error_message TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )"""
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_events_project_id ON events(project_id)",
+        "CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_events_proj_created ON events(project_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_events_proj_type ON events(project_id, event_type)",
+        "CREATE INDEX IF NOT EXISTS idx_events_session_created ON events(session_id, created_at ASC)",
+        "CREATE INDEX IF NOT EXISTS idx_recordings_proj_created ON session_recordings(project_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_apm_proj_created ON apm_traces(project_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_notifs_org_created ON notifications(organization_id, created_at DESC)",
+        "UPDATE organizations SET storage_quota_mb = 15360, monthly_event_limit = 1000000 WHERE storage_quota_mb IS NULL OR storage_quota_mb <= 5120"
     ]
     try:
         with engine.connect() as _conn:
@@ -528,30 +538,57 @@ def _check_org_quota_alert(db: Session, project: models.Project):
         return
     try:
         org = db.query(models.Organization).filter(models.Organization.id == org_id).first()
-        if not org or not org.monthly_event_limit or org.monthly_event_limit <= 0:
+        if not org:
             return
+        from app import alerts
         proj_ids = [p.id for p in db.query(models.Project.id).filter(models.Project.organization_id == org_id).all()]
         total_events = db.query(models.Event).filter(models.Event.project_id.in_(proj_ids)).count() if proj_ids else 0
-        pct = round((total_events / org.monthly_event_limit) * 100, 1)
-        from app import alerts
-        if pct >= 100:
+        if org.monthly_event_limit and org.monthly_event_limit > 0:
+            pct = round((total_events / org.monthly_event_limit) * 100, 1)
+            if pct >= 100:
+                alerts.dispatch_alert(
+                    db=db,
+                    organization_id=org_id,
+                    title=f'🚨 Monthly Event Quota Exceeded (100%): {org.name}',
+                    message=f'Your workspace has used {total_events:,} / {org.monthly_event_limit:,} events ({pct}%). Upgrade your plan to avoid ingestion throttling.',
+                    alert_type='critical',
+                    metadata={'usage_pct': pct, 'total_events': total_events, 'limit': org.monthly_event_limit},
+                    event_category='quota_limit'
+                )
+            elif pct >= 80:
+                alerts.dispatch_alert(
+                    db=db,
+                    organization_id=org_id,
+                    title=f'⚠️ Monthly Event Quota at {pct}%: {org.name}',
+                    message=f'Your workspace has reached {total_events:,} / {org.monthly_event_limit:,} monthly events ({pct}%).',
+                    alert_type='warning',
+                    metadata={'usage_pct': pct, 'total_events': total_events, 'limit': org.monthly_event_limit},
+                    event_category='quota_limit'
+                )
+
+        # Also check Disk & Recording Storage Quota
+        rec_count = db.query(models.SessionRecording).filter(models.SessionRecording.project_id.in_(proj_ids)).count() if proj_ids else 0
+        quota_mb = float(getattr(org, 'storage_quota_mb', None) or 15360.0)
+        est_storage_mb = round(((total_events * 1536) + (rec_count * 290 * 1024)) / (1024 * 1024), 2)
+        storage_pct = round((est_storage_mb / max(quota_mb, 1.0)) * 100, 1)
+        if storage_pct >= 100:
             alerts.dispatch_alert(
                 db=db,
                 organization_id=org_id,
-                title=f'🚨 Monthly Event Quota Exceeded (100%): {org.name}',
-                message=f'Your workspace has used {total_events:,} / {org.monthly_event_limit:,} events ({pct}%). Upgrade your plan to avoid ingestion throttling.',
+                title=f'🚨 Storage Quota Reached ({est_storage_mb} MB / {int(quota_mb)} MB): {project.domain}',
+                message=f'Domain {project.domain} has consumed {est_storage_mb} MB ({storage_pct}% of {round(quota_mb/1024, 1)} GB storage quota) across {rec_count:,} session replays.',
                 alert_type='critical',
-                metadata={'usage_pct': pct, 'total_events': total_events, 'limit': org.monthly_event_limit},
+                metadata={'usage_pct': storage_pct, 'storage_used_mb': est_storage_mb, 'quota_limit_mb': quota_mb, 'url': f'https://{project.domain}'},
                 event_category='quota_limit'
             )
-        elif pct >= 80:
+        elif storage_pct >= 80:
             alerts.dispatch_alert(
                 db=db,
                 organization_id=org_id,
-                title=f'⚠️ Monthly Event Quota at {pct}%: {org.name}',
-                message=f'Your workspace has reached {total_events:,} / {org.monthly_event_limit:,} monthly events ({pct}%).',
+                title=f'⚠️ Storage Quota Warning ({storage_pct}%): {project.domain}',
+                message=f'Domain {project.domain} is using {est_storage_mb} MB of {round(quota_mb/1024, 1)} GB storage quota ({rec_count:,} sessions).',
                 alert_type='warning',
-                metadata={'usage_pct': pct, 'total_events': total_events, 'limit': org.monthly_event_limit},
+                metadata={'usage_pct': storage_pct, 'storage_used_mb': est_storage_mb, 'quota_limit_mb': quota_mb, 'url': f'https://{project.domain}'},
                 event_category='quota_limit'
             )
     except Exception:
@@ -631,13 +668,13 @@ def create_or_append_recording(payload: RecordingPayload, request: Request, db: 
         }
 
     # Automatically sync pageviews & mouse clicks from rrweb stream into Events table
-    # (Protects Dashboard, Analytics & Heatmaps even if visitor's browser blocks /api/v1/track)
+    # (Only inspect incoming_events + first 3 events instead of re-scanning all_events)
     if resolved_project_id is not None:
         try:
             discovered_url = payload.url
             vp_width = 1440
             vp_height = 900
-            for ev in all_events:
+            for ev in (existing_events[:3] + incoming_events):
                 if isinstance(ev, dict) and ev.get("type") == 4:
                     ev_data = ev.get("data") or {}
                     if ev_data.get("href"):
@@ -652,22 +689,21 @@ def create_or_append_recording(payload: RecordingPayload, request: Request, db: 
 
             base_meta = payload.meta or {"browser": "Chrome", "os": "Windows", "screen": f"{vp_width}x{vp_height}"}
 
-            # Ensure at least one pageview exists for this session + URL
-            has_pv = db.query(models.Event).filter(
-                models.Event.session_id == session_id,
-                models.Event.event_type == "pageview",
-                models.Event.url == discovered_url
-            ).first()
-            if not has_pv:
-                db.add(models.Event(
-                    project_id=resolved_project_id,
-                    event_type="pageview",
-                    url=discovered_url,
-                    referrer=payload.referrer or "",
-                    session_id=session_id,
-                    properties=base_meta
-                ))
-                db.commit()
+            # Ensure at least one pageview exists for this session + URL (only check on new recording or URL change)
+            if not existing_rec:
+                has_pv = db.query(models.Event.id).filter(
+                    models.Event.session_id == session_id,
+                    models.Event.event_type == "pageview"
+                ).first()
+                if not has_pv:
+                    db.add(models.Event(
+                        project_id=resolved_project_id,
+                        event_type="pageview",
+                        url=discovered_url,
+                        referrer=payload.referrer or "",
+                        session_id=session_id,
+                        properties=base_meta
+                    ))
 
             # Extract any Click interactions (rrweb type=3, source=2, type=2) from incoming_events
             for ev in incoming_events:
@@ -691,17 +727,12 @@ def create_or_append_recording(payload: RecordingPayload, request: Request, db: 
         except Exception:
             db.rollback()
 
-    # Compress JSON events using standard library gzip
+    # Compress JSON events using standard library gzip (write once to canonical STORAGE_DIR_API)
     compressed_bytes = gzip.compress(json.dumps(all_events).encode("utf-8"))
 
     STORAGE_DIR_API.mkdir(parents=True, exist_ok=True)
     with open(file_api, "wb") as f:
         f.write(compressed_bytes)
-
-    if file_root != file_api:
-        STORAGE_DIR_ROOT.mkdir(parents=True, exist_ok=True)
-        with open(file_root, "wb") as f:
-            f.write(compressed_bytes)
 
     # Calculate realistic duration based on event timestamps (prevents 2-hour idle frozen replay gaps)
     calc_duration = 0
@@ -744,7 +775,6 @@ def create_or_append_recording(payload: RecordingPayload, request: Request, db: 
         if rec_role: existing_rec.user_role = rec_role
         if rec_ver: existing_rec.app_version = rec_ver
         db.commit()
-        db.refresh(existing_rec)
     else:
         new_rec = models.SessionRecording(
             session_id=session_id,
@@ -760,9 +790,9 @@ def create_or_append_recording(payload: RecordingPayload, request: Request, db: 
         )
         db.add(new_rec)
         db.commit()
-        db.refresh(new_rec)
 
     update_live_visitor_presence(db, resolved_project_id, session_id, payload.url, payload.referrer, payload.meta)
+    _check_org_quota_alert(db, project)
 
     return {
         "status": "stored",
@@ -774,6 +804,7 @@ def create_or_append_recording(payload: RecordingPayload, request: Request, db: 
 @app.get('/api/v1/recordings')
 def list_recordings(
     project_id: Optional[int] = None,
+    limit: int = 150,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
@@ -789,25 +820,41 @@ def list_recordings(
             raise HTTPException(status_code=403, detail="Access denied to requested project")
         query = query.filter(models.SessionRecording.project_id == project_id)
     else:
-        # Default to user's organization projects (even for superadmin to prevent accidental workspace leakage)
         if user_project_ids:
             query = query.filter(models.SessionRecording.project_id.in_(user_project_ids))
         elif not is_admin:
             return []
 
-    recordings = query.order_by(models.SessionRecording.created_at.desc()).all()
-    results = []
+    safe_limit = min(max(limit, 1), 1000)
+    recordings = query.order_by(models.SessionRecording.created_at.desc()).limit(safe_limit).all()
+    if not recordings:
+        return []
 
     proj_cache = {p.id: p.domain for p in db.query(models.Project).filter(models.Project.id.in_(user_project_ids)).all()} if user_project_ids else {}
 
+    # Single batched SQL query instead of 2*N queries per session!
+    sids = [r.session_id for r in recordings if r.session_id]
+    session_event_map = {}
+    if sids:
+        for sid_val, ev_cnt, ev_url, ev_props in db.query(
+            models.Event.session_id,
+            func.count(models.Event.id),
+            models.Event.url,
+            models.Event.properties
+        ).filter(models.Event.session_id.in_(sids)).group_by(models.Event.session_id).all():
+            session_event_map[sid_val] = (
+                int(ev_cnt or 1),
+                ev_url or "",
+                ev_props if isinstance(ev_props, dict) else {}
+            )
+
+    results = []
     for r in recordings:
-        first_event = db.query(models.Event).filter(models.Event.session_id == r.session_id).order_by(models.Event.created_at.asc()).first()
+        ev_cnt, first_url, client_meta = session_event_map.get(r.session_id, (1, "", {}))
         proj_domain = proj_cache.get(r.project_id) or ""
         default_url = f"https://{proj_domain}/" if proj_domain else ""
-        entry_url = (first_event.url if (first_event and first_event.url) else default_url) or ""
-        event_count = db.query(models.Event).filter(models.Event.session_id == r.session_id).count()
-        client_meta = (first_event.properties or {}) if first_event else {}
-        
+        entry_url = (first_url if first_url else default_url) or ""
+
         iso_created = None
         if r.created_at:
             iso_created = r.created_at.isoformat()
@@ -829,7 +876,7 @@ def list_recordings(
             "user_email": getattr(r, "user_email", None) or client_meta.get("user_email"),
             "user_name": getattr(r, "user_name", None) or client_meta.get("user_name"),
             "user_role": getattr(r, "user_role", None) or client_meta.get("user_role"),
-            "event_count": max(event_count, 1)
+            "event_count": max(ev_cnt, 1)
         })
     return results
 
@@ -1325,18 +1372,18 @@ def get_dashboard_stats(db: Session = Depends(get_db), current_user: models.User
     project_ids = get_user_project_ids(db, current_user)
     if not project_ids:
         return {'api_uptime': 0, 'avg_latency': 0, 'active_sessions': 0, 'total_events': 0, 'last_event_at': None}
-    
-    event_sessions = set(
-        r[0] for r in db.query(models.Event.session_id).filter(models.Event.project_id.in_(project_ids)).distinct().all() if r[0]
-    )
-    rec_sessions = set(
-        r[0] for r in db.query(models.SessionRecording.session_id).filter(models.SessionRecording.project_id.in_(project_ids)).distinct().all() if r[0]
-    )
-    active_sessions = len(event_sessions | rec_sessions)
-    total_events = db.query(models.Event).filter(models.Event.project_id.in_(project_ids)).count()
-    if total_events == 0 and len(rec_sessions) > 0:
-        total_events = len(rec_sessions)
-    
+
+    ev_sess_cnt = db.query(func.count(func.distinct(models.Event.session_id))).filter(
+        models.Event.project_id.in_(project_ids)
+    ).scalar() or 0
+    rec_sess_cnt = db.query(func.count(func.distinct(models.SessionRecording.session_id))).filter(
+        models.SessionRecording.project_id.in_(project_ids)
+    ).scalar() or 0
+    active_sessions = max(ev_sess_cnt, rec_sess_cnt)
+    total_events = db.query(func.count(models.Event.id)).filter(models.Event.project_id.in_(project_ids)).scalar() or 0
+    if total_events == 0 and rec_sess_cnt > 0:
+        total_events = rec_sess_cnt
+
     # Calculate real uptime and latency from user monitors if present
     monitors = db.query(models.UptimeMonitor).filter(models.UptimeMonitor.project_id.in_(project_ids)).all()
     if monitors:
@@ -1347,9 +1394,11 @@ def get_dashboard_stats(db: Session = Depends(get_db), current_user: models.User
     else:
         api_uptime = 100.0 if total_events > 0 else 0.0
         avg_latency = 0
-    
-    last_event = db.query(models.Event).filter(models.Event.project_id.in_(project_ids)).order_by(models.Event.created_at.desc()).first()
-    last_event_time = last_event.created_at.isoformat() if last_event and last_event.created_at else None
+
+    last_event_dt = db.query(models.Event.created_at).filter(
+        models.Event.project_id.in_(project_ids)
+    ).order_by(models.Event.id.desc()).limit(1).scalar()
+    last_event_time = last_event_dt.isoformat() if last_event_dt else None
 
     return {
         'api_uptime': api_uptime,
@@ -1366,7 +1415,7 @@ def get_dashboard_activity(limit: int = 15, db: Session = Depends(get_db), curre
         return []
     events = db.query(models.Event).filter(
         models.Event.project_id.in_(project_ids)
-    ).order_by(models.Event.created_at.desc()).limit(limit).all()
+    ).order_by(models.Event.id.desc()).limit(limit).all()
     return [
         {
             "id": e.id,
@@ -1393,7 +1442,7 @@ def get_analytics_breakdown(db: Session = Depends(get_db), current_user: models.
             "bounce_rate_pct": 0
         }
 
-    # Top pages
+    # Top pages (uses idx_events_proj_type)
     page_counts = db.query(models.Event.url, func.count(models.Event.id)).filter(
         models.Event.project_id.in_(project_ids),
         models.Event.event_type == 'pageview'
@@ -1407,13 +1456,21 @@ def get_analytics_breakdown(db: Session = Depends(get_db), current_user: models.
     ).group_by(models.Event.referrer).order_by(func.count(models.Event.id).desc()).limit(5).all()
     top_referrers = [{"referrer": r[0] if (r[0] and r[0].strip() and r[0] != 'null') else "Direct / Bookmarks", "views": r[1]} for r in ref_counts]
 
-    # Device & Browser Breakdown from Event metadata
-    events = db.query(models.Event).filter(models.Event.project_id.in_(project_ids)).all()
+    # Sample latest 2,500 events (lightweight columns only instead of full table ORM scan of 60k+ rows)
+    recent_rows = db.query(
+        models.Event.event_type,
+        models.Event.session_id,
+        models.Event.properties
+    ).filter(
+        models.Event.project_id.in_(project_ids)
+    ).order_by(models.Event.id.desc()).limit(2500).all()
+
     browser_counts = {}
     device_counts = {"Desktop": 0, "Mobile": 0, "Tablet": 0}
+    session_pvs = {}
 
-    for ev in events:
-        props = ev.properties or {}
+    for ev_type, sess_id, raw_props in recent_rows:
+        props = raw_props if isinstance(raw_props, dict) else {}
         b = props.get("browser", "Chrome")
         browser_counts[b] = browser_counts.get(b, 0) + 1
 
@@ -1431,6 +1488,9 @@ def get_analytics_breakdown(db: Session = Depends(get_db), current_user: models.
         else:
             device_counts["Desktop"] += 1
 
+        if ev_type == 'pageview' and sess_id:
+            session_pvs[sess_id] = session_pvs.get(sess_id, 0) + 1
+
     total_devices = sum(device_counts.values()) or 1
     devices_list = [
         {"name": k, "count": v, "percentage": round((v / total_devices) * 100)}
@@ -1443,19 +1503,15 @@ def get_analytics_breakdown(db: Session = Depends(get_db), current_user: models.
         for k, v in sorted(browser_counts.items(), key=lambda x: x[1], reverse=True)
     ]
 
-    # Calculate average session duration from SessionRecordings
-    recordings = db.query(models.SessionRecording).filter(models.SessionRecording.project_id.in_(project_ids)).all()
-    durations = [r.duration for r in recordings if r.duration and r.duration > 0]
-    avg_duration = round(sum(durations) / len(durations)) if durations else 42
+    # Single SQL AVG aggregation instead of loading all SessionRecordings
+    avg_dur_val = db.query(func.avg(models.SessionRecording.duration)).filter(
+        models.SessionRecording.project_id.in_(project_ids),
+        models.SessionRecording.duration > 0
+    ).scalar()
+    avg_duration = round(float(avg_dur_val)) if avg_dur_val else 42
 
-    # Calculate bounce rate (% of sessions with only 1 pageview)
-    session_pvs = {}
-    for ev in events:
-        if ev.event_type == 'pageview' and ev.session_id:
-            session_pvs[ev.session_id] = session_pvs.get(ev.session_id, 0) + 1
-    
     total_sess = len(session_pvs)
-    bounced = sum(1 for s, count in session_pvs.items() if count <= 1)
+    bounced = sum(1 for _, count in session_pvs.items() if count <= 1)
     bounce_rate = round((bounced / total_sess) * 100, 1) if total_sess > 0 else 38.5
 
     return {
@@ -1472,62 +1528,79 @@ def get_analytics_timeseries(interval: str = '24h', db: Session = Depends(get_db
     project_ids = get_user_project_ids(db, current_user)
     if not project_ids:
         return []
-    
+
     now = datetime.utcnow()
     data = []
 
     if interval == '7d':
-        for i in range(7):
-            target_date = (now - timedelta(days=6-i)).date()
-            start_dt = datetime.combine(target_date, datetime.min.time())
-            end_dt = datetime.combine(target_date, datetime.max.time())
-            
-            events_q = db.query(models.Event).filter(
-                models.Event.project_id.in_(project_ids),
-                models.Event.created_at >= start_dt,
-                models.Event.created_at <= end_dt
-            )
-            pageviews = events_q.filter(models.Event.event_type == 'pageview').count()
-            visitors = db.query(func.count(func.distinct(models.Event.session_id))).filter(
-                models.Event.project_id.in_(project_ids),
-                models.Event.created_at >= start_dt,
-                models.Event.created_at <= end_dt
-            ).scalar() or 0
+        start_7d = datetime.combine((now - timedelta(days=6)).date(), datetime.min.time())
+        rows = db.query(
+            models.Event.created_at,
+            models.Event.event_type,
+            models.Event.session_id
+        ).filter(
+            models.Event.project_id.in_(project_ids),
+            models.Event.created_at >= start_7d
+        ).all()
 
+        pv_by_day = {}
+        vis_by_day = {}
+        for c_at, ev_type, sess_id in rows:
+            if not c_at:
+                continue
+            d_key = c_at.date()
+            if ev_type == 'pageview':
+                pv_by_day[d_key] = pv_by_day.get(d_key, 0) + 1
+            if sess_id:
+                vis_by_day.setdefault(d_key, set()).add(sess_id)
+
+        for i in range(7):
+            target_date = (now - timedelta(days=6 - i)).date()
+            pvs = pv_by_day.get(target_date, 0)
+            vis = len(vis_by_day.get(target_date, set()))
             data.append({
                 'timestamp': target_date.strftime('%a'),
                 'name': target_date.strftime('%a'),
                 'date': target_date.isoformat() + 'Z',
-                'pageviews': pageviews,
-                'visitors': visitors,
-                'sessions': visitors
+                'pageviews': pvs,
+                'visitors': vis,
+                'sessions': vis
             })
     else:
-        # Default: 24 Hours hourly bucketing for Traffic Velocity chart
-        for i in range(24):
-            hour_start = (now - timedelta(hours=23-i)).replace(minute=0, second=0, microsecond=0)
-            hour_end = hour_start + timedelta(hours=1)
-            
-            events_q = db.query(models.Event).filter(
-                models.Event.project_id.in_(project_ids),
-                models.Event.created_at >= hour_start,
-                models.Event.created_at < hour_end
-            )
-            pageviews = events_q.filter(models.Event.event_type == 'pageview').count()
-            visitors = db.query(func.count(func.distinct(models.Event.session_id))).filter(
-                models.Event.project_id.in_(project_ids),
-                models.Event.created_at >= hour_start,
-                models.Event.created_at < hour_end
-            ).scalar() or 0
+        # Single indexed query for 24 Hours instead of 48 separate queries
+        start_24h = (now - timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
+        rows = db.query(
+            models.Event.created_at,
+            models.Event.event_type,
+            models.Event.session_id
+        ).filter(
+            models.Event.project_id.in_(project_ids),
+            models.Event.created_at >= start_24h
+        ).all()
 
+        pv_by_hour = {}
+        vis_by_hour = {}
+        for c_at, ev_type, sess_id in rows:
+            if not c_at:
+                continue
+            h_key = c_at.replace(minute=0, second=0, microsecond=0)
+            if ev_type == 'pageview':
+                pv_by_hour[h_key] = pv_by_hour.get(h_key, 0) + 1
+            if sess_id:
+                vis_by_hour.setdefault(h_key, set()).add(sess_id)
+
+        for i in range(24):
+            hour_start = (now - timedelta(hours=23 - i)).replace(minute=0, second=0, microsecond=0)
+            pvs = pv_by_hour.get(hour_start, 0)
+            vis = len(vis_by_hour.get(hour_start, set()))
             time_label = hour_start.strftime('%H:00')
             data.append({
                 'timestamp': time_label,
                 'name': time_label,
                 'date': hour_start.isoformat() + 'Z',
-                'pageviews': pageviews,
-                'visitors': visitors,
-                'sessions': visitors
+                'pageviews': pvs,
+                'visitors': vis,
+                'sessions': vis
             })
 
     return data
@@ -2522,7 +2595,7 @@ def check_monitor(monitor_id: int, db: Session = Depends(get_db), current_user: 
         raise HTTPException(status_code=403, detail="Forbidden: monitor does not belong to user")
     return _execute_monitor_check(db, monitor)
 
-# ===================== NOTIFICATIONS =====================
+# ===================== NOTIFICATIONS & LIVE PORTAL NEWS =====================
 @app.get('/api/v1/notifications')
 def list_notifications(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     notifs = db.query(models.Notification).filter(models.Notification.organization_id == current_user.organization_id).order_by(models.Notification.created_at.desc()).limit(50).all()
@@ -2530,11 +2603,52 @@ def list_notifications(db: Session = Depends(get_db), current_user: models.User 
 
 @app.post('/api/v1/notifications/{notif_id}/read')
 def mark_read(notif_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    notif = db.query(models.Notification).filter(models.Notification.id == notif_id, models.Notification.organization_id == current_user.organization_id).first()
-    if notif:
+    notif = db.query(models.Notification).filter(models.Notification.id == notif_id).first()
+    if notif and (notif.organization_id == current_user.organization_id or is_superadmin_user(current_user)):
         notif.is_read = True
         db.commit()
     return {"ok": True}
+
+@app.post('/api/v1/notifications/read-all')
+def mark_all_read(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    q = db.query(models.Notification).filter(models.Notification.is_read == False)
+    if not is_superadmin_user(current_user):
+        q = q.filter(models.Notification.organization_id == current_user.organization_id)
+    q.update({"is_read": True}, synchronize_session=False)
+    db.commit()
+    return {"ok": True}
+
+@app.get('/api/v1/alerts/news')
+def get_portal_news_alerts(project_id: Optional[int] = None, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    """Returns live portal news, storage quota alerts, and unread critical/warning notifications."""
+    is_admin = is_superadmin_user(current_user)
+    if is_admin:
+        # SuperAdmin / Admin sees unread alerts across all client workspaces (including SelfUp & ScanPe)
+        notifs = db.query(models.Notification).filter(
+            models.Notification.is_read == False
+        ).order_by(models.Notification.created_at.desc()).limit(15).all()
+    else:
+        notifs = db.query(models.Notification).filter(
+            models.Notification.organization_id == current_user.organization_id,
+            models.Notification.is_read == False
+        ).order_by(models.Notification.created_at.desc()).limit(15).all()
+
+    items = [
+        {
+            "id": n.id,
+            "organization_id": n.organization_id,
+            "title": n.title,
+            "message": n.message,
+            "type": n.type or "info",
+            "is_read": bool(n.is_read),
+            "created_at": (n.created_at.isoformat() + "Z") if n.created_at else None
+        }
+        for n in notifs
+    ]
+    return {
+        "unread_count": len(items),
+        "news": items
+    }
 
 # ===================== SEO AUDIT =====================
 class SeoAuditRequest(BaseModel):
@@ -3533,7 +3647,7 @@ def get_marketing_campaigns(db: Session = Depends(get_db), current_user: models.
         return {"channels": [], "domain": "", "total_conversions": 0, "total_spend_usd": 0}
     p = projects[0]
     
-    events = db.query(models.Event).filter(models.Event.project_id == p.id).all()
+    events = db.query(models.Event).filter(models.Event.project_id == p.id).order_by(models.Event.id.desc()).limit(2500).all()
     active_connectors = {c.provider for c in db.query(models.Connector).filter(models.Connector.project_id == p.id, models.Connector.status == "active").all() if c.provider}
     
     channel_counts = {
@@ -4389,10 +4503,17 @@ def export_standalone_replay_html(
 # ADVANCED OBSERVABILITY: SYSTEM PROBE & SERVER RESOURCE MONITOR
 # ==============================================================================
 
+_RESOURCE_CACHE = {}
+
 @app.get('/api/v1/system/resources')
-def get_system_resources(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def get_system_resources(project_id: Optional[int] = None, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    import time as _tm
     projects = get_user_projects(db, current_user)
-    active_project = projects[0] if projects else None
+    active_project = None
+    if project_id and projects:
+        active_project = next((p for p in projects if p.id == project_id), None)
+    if not active_project and projects:
+        active_project = projects[0]
 
     # 1. Server Disk Space (shutil zero-dependency probe)
     try:
@@ -4436,42 +4557,76 @@ def get_system_resources(db: Session = Depends(get_db), current_user: models.Use
     except Exception:
         pass
 
-    # 4. Tenant Isolated Storage & Resource Usage (SelfUp Community / Active Domain)
+    # 4. Tenant Isolated Storage & Resource Usage (Cached 45s + Fast os.scandir)
     storage_bytes = 0
     session_count = 0
     event_count = 0
     domain_name = active_project.domain if active_project else "selfupcommunity.com"
-    project_id = active_project.id if active_project else 1
+    resolved_pid = active_project.id if active_project else 1
+    quota_limit_mb = 15360.0  # 15 GB default enterprise quota
 
     if active_project:
-        recs = db.query(models.SessionRecording).filter(models.SessionRecording.project_id == active_project.id).all()
-        session_count = len(recs)
-        event_count = db.query(models.Event).filter(models.Event.project_id == active_project.id).count()
+        org = db.query(models.Organization).filter(models.Organization.id == active_project.organization_id).first()
+        if org and getattr(org, 'storage_quota_mb', None):
+            quota_limit_mb = float(max(org.storage_quota_mb, 5120))
 
-        storage_dirs = [
-            os.path.join(os.path.dirname(__file__), '..', 'storage', 'recordings'),
-            os.path.join(os.getcwd(), 'storage', 'recordings'),
-            '/var/www/thirdeye/storage/recordings',
-            '/var/www/thirdeye/apps/api/storage/recordings'
-        ]
-        
-        seen_sessions = {r.session_id for r in recs if r.session_id}
-        for s_id in seen_sessions:
-            for s_dir in storage_dirs:
-                if os.path.isdir(s_dir):
-                    for ext in ['.json', '.json.gz']:
-                        fp = os.path.join(s_dir, f"{s_id}{ext}")
-                        if os.path.exists(fp):
-                            storage_bytes += os.path.getsize(fp)
-                            break
-    
-    # Add metadata and event index storage footprint
-    storage_bytes += (event_count * 1536) + (session_count * 10240)
-    if session_count > 0 and storage_bytes < 50 * 1024:
-        storage_bytes = session_count * 320 * 1024
-        
-    storage_used_mb = round(storage_bytes / (1024 * 1024), 2)
-    quota_limit_mb = 5120.0  # 5GB quota per tenant
+        now_ts = _tm.time()
+        cached_entry = _RESOURCE_CACHE.get(resolved_pid)
+        if cached_entry and (now_ts - cached_entry[0]) < 45.0:
+            storage_used_mb, session_count, event_count = cached_entry[1], cached_entry[2], cached_entry[3]
+        else:
+            session_rows = db.query(models.SessionRecording.session_id).filter(
+                models.SessionRecording.project_id == active_project.id
+            ).all()
+            session_count = len(session_rows)
+            event_count = db.query(func.count(models.Event.id)).filter(
+                models.Event.project_id == active_project.id
+            ).scalar() or 0
+
+            seen_sessions = {r[0] for r in session_rows if r[0]}
+            # Deduplicate physical directories and scan once with os.scandir
+            candidate_dirs = [
+                str(STORAGE_DIR_API),
+                str(STORAGE_DIR_ROOT),
+                '/var/www/thirdeye/apps/api/storage/recordings',
+                '/var/www/thirdeye/storage/recordings'
+            ]
+            unique_dirs = []
+            seen_realpaths = set()
+            for d in candidate_dirs:
+                if os.path.isdir(d):
+                    rp = os.path.realpath(d)
+                    if rp not in seen_realpaths:
+                        seen_realpaths.add(rp)
+                        unique_dirs.append(rp)
+
+            counted_sessions = set()
+            for s_dir in unique_dirs:
+                try:
+                    with os.scandir(s_dir) as it:
+                        for entry in it:
+                            if not entry.is_file(follow_symlinks=False):
+                                continue
+                            name = entry.name
+                            sid = None
+                            if name.endswith('.json.gz'):
+                                sid = name[:-8]
+                            elif name.endswith('.json'):
+                                sid = name[:-5]
+                            if sid and sid in seen_sessions and sid not in counted_sessions:
+                                counted_sessions.add(sid)
+                                storage_bytes += entry.stat(follow_symlinks=False).st_size
+                except Exception:
+                    pass
+
+            storage_bytes += (event_count * 1536) + (session_count * 10240)
+            if session_count > 0 and storage_bytes < 50 * 1024:
+                storage_bytes = session_count * 320 * 1024
+
+            storage_used_mb = round(storage_bytes / (1024 * 1024), 2)
+            _RESOURCE_CACHE[resolved_pid] = (now_ts, storage_used_mb, session_count, event_count)
+
+    storage_pct = round((storage_used_mb / max(quota_limit_mb, 1.0)) * 100, 2)
 
     return {
         "server": {
@@ -4489,13 +4644,13 @@ def get_system_resources(db: Session = Depends(get_db), current_user: models.Use
             "cpu_load_percent": cpu_pct
         },
         "tenant": {
-            "project_id": project_id,
+            "project_id": resolved_pid,
             "domain": domain_name,
             "session_count": session_count,
             "event_count": event_count,
             "storage_used_mb": storage_used_mb,
             "quota_limit_mb": quota_limit_mb,
-            "storage_percent": round((storage_used_mb / quota_limit_mb) * 100, 2)
+            "storage_percent": storage_pct
         }
     }
 
@@ -4875,7 +5030,7 @@ def get_unified_search_queries(db: Session = Depends(get_db), current_user: mode
     p = projects[0]
     domain = p.domain or "selfupcommunity.com"
 
-    events = db.query(models.Event).filter(models.Event.project_id == p.id).all()
+    events = db.query(models.Event).filter(models.Event.project_id == p.id).order_by(models.Event.id.desc()).limit(2000).all()
     on_site_queries = []
     for ev in events:
         props = ev.properties or {}

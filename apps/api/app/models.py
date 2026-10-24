@@ -34,6 +34,7 @@ class Organization(Base):
     name = Column(String)
     plan = Column(String, default='Pro')
     monthly_event_limit = Column(Integer, default=100000)
+    storage_quota_mb = Column(Integer, default=5120)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     users = relationship('User', back_populates='organization')

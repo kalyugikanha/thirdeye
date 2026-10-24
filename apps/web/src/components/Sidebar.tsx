@@ -147,6 +147,49 @@ export default function Sidebar() {
       storage_percent: number;
     };
   } | null>(null);
+  const [newsItems, setNewsItems] = useState<any[]>([]);
+  const [newsIdx, setNewsIdx] = useState(0);
+
+  const fetchNews = () => {
+    const token = localStorage.getItem('te_token');
+    if (!token) return;
+    fetch(apiUrl('/api/v1/alerts/news'), {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && Array.isArray(d.news)) {
+          setNewsItems(d.news);
+        }
+      })
+      .catch(() => {});
+  };
+
+  const dismissNewsItem = async (id: number) => {
+    const token = localStorage.getItem('te_token');
+    setNewsItems((prev) => prev.filter((item) => item.id !== id));
+    setNewsIdx(0);
+    if (!token) return;
+    try {
+      await fetch(apiUrl(`/api/v1/notifications/${id}/read`), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    } catch (e) {}
+  };
+
+  const dismissAllNews = async () => {
+    const token = localStorage.getItem('te_token');
+    setNewsItems([]);
+    setNewsIdx(0);
+    if (!token) return;
+    try {
+      await fetch(apiUrl('/api/v1/notifications/read-all'), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    } catch (e) {}
+  };
 
   const fetchStatus = (overridePid?: number) => {
     const token = localStorage.getItem('te_token');
@@ -173,7 +216,7 @@ export default function Sidebar() {
         })
         .catch(() => {});
 
-      fetch(apiUrl('/api/v1/system/resources'), {
+      fetch(apiUrl(`/api/v1/system/resources${q}`), {
         headers: { Authorization: `Bearer ${token}` }
       })
         .then((res) => (res.ok ? res.json() : null))
@@ -190,6 +233,8 @@ export default function Sidebar() {
           if (Array.isArray(list)) setProjects(list);
         })
         .catch(() => {});
+
+      fetchNews();
     }
   };
 
@@ -246,7 +291,19 @@ export default function Sidebar() {
       }
       fetchStatus();
     } catch (e) {}
+    const pollTimer = setInterval(() => {
+      fetchNews();
+    }, 30000);
+    return () => clearInterval(pollTimer);
   }, []);
+
+  useEffect(() => {
+    if (newsItems.length <= 1) return;
+    const rot = setInterval(() => {
+      setNewsIdx((prev) => (prev + 1) % newsItems.length);
+    }, 6000);
+    return () => clearInterval(rot);
+  }, [newsItems.length]);
 
   const handleSignOut = () => {
     localStorage.removeItem('te_token');
@@ -395,6 +452,73 @@ export default function Sidebar() {
             )}
           </div>
 
+          {/* Live Portal News & Alert Ticker */}
+          {newsItems.length > 0 && (() => {
+            const activeNews = newsItems[newsIdx % newsItems.length] || newsItems[0];
+            const isCrit = activeNews.type === 'critical' || activeNews.type === 'error';
+            const isWarn = activeNews.type === 'warning';
+            return (
+              <div className={`p-3 rounded-2xl border space-y-1.5 transition-all ${
+                isCrit
+                  ? 'bg-rose-50/90 border-rose-200 text-rose-900'
+                  : isWarn
+                  ? 'bg-amber-50/90 border-amber-200 text-amber-900'
+                  : 'bg-indigo-50/90 border-indigo-200 text-indigo-900'
+              }`}>
+                <div className="flex items-center justify-between gap-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-2 h-2 rounded-full animate-ping ${
+                      isCrit ? 'bg-rose-600' : isWarn ? 'bg-amber-500' : 'bg-indigo-600'
+                    }`} />
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider">
+                      Portal News ({(newsIdx % newsItems.length) + 1}/{newsItems.length})
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {newsItems.length > 1 && (
+                      <button
+                        onClick={dismissAllNews}
+                        className="text-[9px] font-bold underline opacity-75 hover:opacity-100"
+                        title="Dismiss all news alerts"
+                      >
+                        Clear All
+                      </button>
+                    )}
+                    <button
+                      onClick={() => dismissNewsItem(activeNews.id)}
+                      className="p-0.5 rounded hover:bg-black/10"
+                      title="Dismiss this alert"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-[11px] font-bold leading-snug line-clamp-2">
+                  {activeNews.title}
+                </p>
+                <p className="text-[10px] opacity-80 leading-relaxed line-clamp-2">
+                  {activeNews.message}
+                </p>
+                <div className="flex items-center justify-between pt-1">
+                  <Link
+                    href="/alerts"
+                    className="text-[10px] font-extrabold underline flex items-center gap-0.5"
+                  >
+                    Open Alert Center <ChevronRight className="w-3 h-3" />
+                  </Link>
+                  {newsItems.length > 1 && (
+                    <button
+                      onClick={() => setNewsIdx((prev) => (prev + 1) % newsItems.length)}
+                      className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/70 hover:bg-white"
+                    >
+                      Next →
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Navigation Groups */}
           <div className="space-y-5 overflow-y-auto max-h-[calc(100vh-280px)] pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             {NAV_GROUPS.map((group) => (
@@ -434,6 +558,10 @@ export default function Sidebar() {
                           <span className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full border border-amber-200/60">
                             <Lock className="w-3 h-3 text-amber-500" />
                             <span>Unlock</span>
+                          </span>
+                        ) : item.href === '/alerts' && newsItems.length > 0 ? (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-extrabold bg-rose-600 text-white animate-pulse">
+                            {newsItems.length} Live
                           </span>
                         ) : item.badge ? (
                           <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase ${
@@ -496,17 +624,23 @@ export default function Sidebar() {
               <div className="pt-1.5 border-t border-slate-200/60">
                 <div className="flex justify-between text-[10px] mb-0.5">
                   <span className="font-semibold text-slate-700 truncate max-w-[120px]">{resources.tenant.domain}</span>
-                  <span className="font-mono text-rose-600 font-bold">{resources.tenant.storage_used_mb} MB</span>
+                  <span className={`font-mono font-bold ${
+                    resources.tenant.storage_percent >= 90 ? 'text-rose-600' : resources.tenant.storage_percent >= 75 ? 'text-amber-600' : 'text-emerald-600'
+                  }`}>
+                    {resources.tenant.storage_used_mb} MB ({resources.tenant.storage_percent}%)
+                  </span>
                 </div>
-                <div className="w-full bg-slate-200 h-1 rounded-full overflow-hidden">
+                <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
                   <div 
-                    className="bg-rose-500 h-full rounded-full transition-all" 
-                    style={{ width: `${Math.max(Math.min(resources.tenant.storage_percent * 5, 100), 2)}%` }}
+                    className={`h-full rounded-full transition-all ${
+                      resources.tenant.storage_percent >= 90 ? 'bg-rose-500' : resources.tenant.storage_percent >= 75 ? 'bg-amber-500' : 'bg-emerald-500'
+                    }`}
+                    style={{ width: `${Math.max(Math.min(resources.tenant.storage_percent, 100), 2)}%` }}
                   />
                 </div>
                 <div className="flex justify-between text-[9px] text-slate-400 mt-0.5">
                   <span>{resources.tenant.session_count} sessions</span>
-                  <span>5GB Storage Quota</span>
+                  <span>{Math.round((resources.tenant.quota_limit_mb || 15360) / 1024)}GB Storage Quota</span>
                 </div>
               </div>
             </div>
@@ -672,6 +806,57 @@ export default function Sidebar() {
           </div>
         </div>
       )}
+
+      {/* Top-Right Live Portal News & Incident Banner */}
+      {newsItems.length > 0 && (() => {
+        const topAlert = newsItems[newsIdx % newsItems.length] || newsItems[0];
+        const isCrit = topAlert.type === 'critical' || topAlert.type === 'error';
+        const isWarn = topAlert.type === 'warning';
+        return (
+          <div className="fixed top-4 right-4 z-40 max-w-md w-[92vw] sm:w-auto">
+            <div className={`px-4 py-3 rounded-2xl shadow-xl border backdrop-blur-md flex items-start gap-3 transition-all ${
+              isCrit
+                ? 'bg-rose-950/95 border-rose-500/60 text-white'
+                : isWarn
+                ? 'bg-amber-950/95 border-amber-500/60 text-white'
+                : 'bg-slate-900/95 border-indigo-500/60 text-white'
+            }`}>
+              <div className={`w-2.5 h-2.5 rounded-full mt-1.5 flex-shrink-0 animate-ping ${
+                isCrit ? 'bg-rose-400' : isWarn ? 'bg-amber-400' : 'bg-indigo-400'
+              }`} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-rose-300">
+                    Live Portal News • {(newsIdx % newsItems.length) + 1}/{newsItems.length}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href="/alerts"
+                      className="text-[10px] font-bold text-indigo-300 hover:text-white underline"
+                    >
+                      View All
+                    </Link>
+                    <button
+                      onClick={dismissAllNews}
+                      className="text-[10px] font-bold text-slate-300 hover:text-white underline"
+                    >
+                      Dismiss All
+                    </button>
+                    <button
+                      onClick={() => dismissNewsItem(topAlert.id)}
+                      className="text-slate-300 hover:text-white p-0.5"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs font-extrabold mt-0.5 truncate">{topAlert.title}</p>
+                <p className="text-[11px] text-slate-200 line-clamp-2 mt-0.5">{topAlert.message}</p>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Floating AI Robot Guide (Active on all pages) */}
       <AiGuideWidget domain={domain} isConnected={isConnected} context={pathname} />
