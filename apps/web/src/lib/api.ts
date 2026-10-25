@@ -4,6 +4,12 @@ export const API_BASE = (
 
 export function apiUrl(path: string): string {
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  if (typeof window !== 'undefined' && window.location.origin) {
+    // In production browser, always use current origin so API calls never hit external services
+    if (window.location.hostname === 'thirdeye.colladome.com' || !process.env.NEXT_PUBLIC_API_URL) {
+      return cleanPath;
+    }
+  }
   return `${API_BASE}${cleanPath}`;
 }
 
