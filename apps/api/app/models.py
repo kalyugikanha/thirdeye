@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, JSON, Index, Text
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, JSON, Index, Text, Float
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database import Base
@@ -412,5 +412,94 @@ class AppCrashLog(Base):
     memory_free_mb = Column(Integer, nullable=True)
     battery_pct = Column(Integer, nullable=True)
     network_type = Column(String, default='wifi')     # 'wifi', '5g', '4g', 'offline'
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    project = relationship('Project')
+
+
+class SecureEyeFinding(Base):
+    __tablename__ = 'secureeye_findings'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    title = Column(String, index=True)
+    category = Column(String, default='web', index=True)  # 'web', 'api', 'server', 'network', 'cloud', 'auth', 'internal_portal', 'mobile', 'qa'
+    asset = Column(String)
+    severity = Column(String, default='Medium', index=True)  # 'Critical', 'High', 'Medium', 'Low', 'Info'
+    cvss_score = Column(Float, default=5.0)
+    confidence = Column(String, default='High')
+    cia_impact = Column(String, default='Confidentiality')  # 'Confidentiality', 'Integrity', 'Availability', 'All (CIA)'
+    evidence = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+    root_cause = Column(String, nullable=True)
+    impact = Column(Text, nullable=True)
+    fix_steps = Column(Text, nullable=True)
+    references_json = Column(JSON, default=list)  # ['CWE-200', 'OWASP A05:2021', 'MITRE T1190']
+    status = Column(String, default='open', index=True)  # 'open', 'accepted', 'fixed', 'retest'
+    owner = Column(String, default='Security Team')
+    first_seen = Column(DateTime, default=datetime.utcnow)
+    last_seen = Column(DateTime, default=datetime.utcnow, index=True)
+    project = relationship('Project')
+
+
+class SecureEyeScanLog(Base):
+    __tablename__ = 'secureeye_scan_logs'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    user_email = Column(String, nullable=True)
+    scan_mode = Column(String, default='passive')  # 'passive', 'safe_active', 'deep_authorized'
+    target = Column(String)
+    ownership_verified = Column(Boolean, default=True)
+    summary_json = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    project = relationship('Project')
+
+
+class SecureEyeAgentReport(Base):
+    __tablename__ = 'secureeye_agent_reports'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    hostname = Column(String, default='droplet-node-01')
+    os_info = Column(String, default='Ubuntu 24.04 LTS')
+    listening_sockets_json = Column(JSON, default=list)  # [{'proto':'tcp','bind':'0.0.0.0','port':8000,'process':'uvicorn','risk':'high'}]
+    firewall_active = Column(Boolean, default=False)
+    ssh_root_login = Column(String, default='unknown')
+    env_permissions_ok = Column(Boolean, default=True)
+    fim_status_json = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    project = relationship('Project')
+
+
+class SecureEyeQATestCase(Base):
+    __tablename__ = 'secureeye_qa_test_cases'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    suite = Column(String, default='launch_checklist', index=True)  # 'launch_checklist', 'smoke', 'regression', 'boundary', 'negative', 'uat'
+    area = Column(String, default='Functional')
+    title = Column(String)
+    test_type = Column(String, default='automated')  # 'automated', 'manual', 'hybrid'
+    perspective = Column(String, default='black_box')
+    steps = Column(Text, nullable=True)
+    expected_result = Column(Text, nullable=True)
+    status = Column(String, default='pending')  # 'passed', 'failed', 'flaky', 'pending'
+    last_run_ms = Column(Integer, default=0)
+    evidence = Column(Text, nullable=True)
+    owner = Column(String, default='QA Team')
+    updated_at = Column(DateTime, default=datetime.utcnow, index=True)
+    project = relationship('Project')
+
+
+class SecureEyeLoadTestRun(Base):
+    __tablename__ = 'secureeye_load_test_runs'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    test_kind = Column(String, default='load')  # 'load', 'spike', 'fuzz', 'monkey'
+    target_url = Column(String)
+    total_requests = Column(Integer, default=10)
+    success_count = Column(Integer, default=10)
+    error_5xx_count = Column(Integer, default=0)
+    p50_ms = Column(Integer, default=0)
+    p95_ms = Column(Integer, default=0)
+    p99_ms = Column(Integer, default=0)
+    rps = Column(Float, default=0.0)
+    details_json = Column(JSON, default=dict)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     project = relationship('Project')

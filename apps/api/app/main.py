@@ -19,7 +19,7 @@ import io
 from dotenv import load_dotenv
 load_dotenv()  # Load .env file so GEMINI_API_KEY is available
 from app.database import engine, Base, get_db, SessionLocal
-from app import models, auth, enterprise, growth, intelligence, phase2_internal
+from app import models, auth, enterprise, growth, intelligence, phase2_internal, secureeye
 from pydantic import BaseModel
 try:
     import email_validator
@@ -44,6 +44,7 @@ models.Base.metadata.create_all(bind=engine)
 
 def safe_migrate_sqlite_schema():
     phase2_internal.migrate_phase2_schema(engine)
+    secureeye.migrate_secureeye_schema(engine)
     migration_sqls = [
         "ALTER TABLE projects ADD COLUMN dns_verified BOOLEAN DEFAULT 0",
         "ALTER TABLE projects ADD COLUMN dns_token TEXT",
@@ -147,6 +148,7 @@ app.include_router(enterprise.router)
 app.include_router(growth.router)
 app.include_router(intelligence.router)
 app.include_router(phase2_internal.router)
+app.include_router(secureeye.router)
 
 @app.middleware("http")
 async def cors_middleware(request: Request, call_next):

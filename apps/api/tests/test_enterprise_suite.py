@@ -368,4 +368,60 @@ def test_11_phase2_identify_internal_audit_and_mobile_app_telemetry(client):
     assert len(apps_list) == 2 and any(a["app_type"] == "internal_portal" and a["mask_all_inputs"] is True for a in apps_list)
 
 
+# -------------------------------------------------------------- 7. phase 3 (SecureEye Cybersecurity & QA Master Suite)
+def test_12_secureeye_three_phase_security_and_qa_suite(client):
+    headers, pid, key, domain = register_tenant(client, "secureeye-test.com")
+
+    # 1. Overview & auto-seeded 14-point launch checklist + core QA suites
+    ov = client.get("/api/v1/secureeye/overview", headers=headers).json()
+    assert ov["project"]["id"] == pid
+    assert ov["summary"]["launch_total"] == 14
+    assert ov["summary"]["qa_total_cases"] >= 19
+    assert "listening_sockets" in ov["inside_agent"]
+
+    # 2. Blueprint catalog (12 root causes, attack catalog, playbooks)
+    cat = client.get("/api/v1/secureeye/catalog", headers=headers).json()
+    assert len(cat["root_causes"]) == 12
+    assert len(cat["attack_catalog"]) >= 8
+    assert "ufw_lockdown" in cat["playbooks"]
+    assert "nginx_hardening" in cat["playbooks"]
+
+    # 3. Inside-agent heartbeat with 0.0.0.0 wildcard socket detection
+    hb = client.post("/api/v1/secureeye/agent/heartbeat", json={
+        "api_key": key,
+        "hostname": "prod-node-01",
+        "os_info": "Ubuntu 24.04 LTS",
+        "firewall_active": False,
+        "ssh_root_login": "yes",
+        "env_permissions_ok": False,
+        "listening_sockets": [
+            {"proto": "tcp", "bind": "0.0.0.0", "port": 6379, "process": "redis-server", "is_wildcard_0000": True, "risk": "critical"},
+            {"proto": "tcp", "bind": "127.0.0.1", "port": 5432, "process": "postgres", "is_wildcard_0000": False, "risk": "safe"}
+        ]
+    })
+    assert hb.status_code == 200 and hb.json()["wildcard_0000_count"] == 1
+
+    # Verify finding was automatically created for 0.0.0.0:6379
+    ov2 = client.get("/api/v1/secureeye/overview", headers=headers).json()
+    assert any("0.0.0.0:6379" in f["title"] for f in ov2["findings"])
+
+    # 4. Update QA test case status & create new regression case
+    first_case_id = ov2["qa_test_cases"][0]["id"]
+    upd_tc = client.patch(f"/api/v1/secureeye/qa/test-cases/{first_case_id}", headers=headers, json={
+        "status": "passed",
+        "evidence": "Verified during CI release gate"
+    })
+    assert upd_tc.status_code == 200 and upd_tc.json()["status"] == "passed"
+
+    new_tc = client.post("/api/v1/secureeye/qa/test-cases", headers=headers, json={
+        "suite": "regression",
+        "area": "Security",
+        "title": "Verify Redis 6379 is blocked externally by UFW",
+        "test_type": "automated",
+        "perspective": "grey_box"
+    })
+    assert new_tc.status_code == 200 and new_tc.json()["suite"] == "regression"
+
+
+
 

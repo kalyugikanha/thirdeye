@@ -80,6 +80,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Health & APM",
     items: [
+      { href: '/security', icon: ShieldCheck, title: 'SecureEye Cyber & QA', badge: '3-Phase' },
       { href: '/performance', icon: Gauge, title: 'Core Web Vitals', badge: 'CWV' },
       { href: '/devops', icon: Cpu, title: 'Server APM & APIs' },
       { href: '/devops/network', icon: WifiOff, title: 'Network & API Inspector', badge: 'XHR' },
