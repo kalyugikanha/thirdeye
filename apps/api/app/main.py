@@ -4613,8 +4613,11 @@ def get_system_resources(project_id: Optional[int] = None, db: Session = Depends
 
     # 4. Tenant Isolated Storage & Resource Usage (Cached 45s + Fast os.scandir)
     storage_bytes = 0
+    storage_used_mb = 0.0
     session_count = 0
     event_count = 0
+    if not active_project and is_superadmin_user(current_user):
+        active_project = db.query(models.Project).first()
     domain_name = active_project.domain if active_project else "selfupcommunity.com"
     resolved_pid = active_project.id if active_project else 1
     quota_limit_mb = 15360.0  # 15 GB default enterprise quota
