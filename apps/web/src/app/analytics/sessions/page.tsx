@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import Sidebar from '@/components/Sidebar';
+import PaginationControls from '@/components/PaginationControls';
 import { apiUrl, API_BASE } from '@/lib/api';
 import {
   BarChart as BarChartIcon,
@@ -70,6 +71,12 @@ export default function SessionsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Pagination state
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
   // Replay modal state
   const [activeSession, setActiveSession] = useState<SessionRecording | null>(null);
   const [replayEvents, setReplayEvents] = useState<any[] | null>(null);
@@ -104,8 +111,13 @@ export default function SessionsPage() {
         .catch(() => {});
 
       const activePid = typeof window !== 'undefined' ? localStorage.getItem('te_active_project_id') : null;
-      const q = activePid ? `?project_id=${activePid}` : '';
-      const res = await fetch(apiUrl(`/api/v1/recordings${q}`), { headers });
+      const params = new URLSearchParams();
+      if (activePid) params.append('project_id', activePid);
+      params.append('page', String(page));
+      params.append('page_size', String(pageSize));
+      if (userSearch.trim()) params.append('search', userSearch.trim());
+
+      const res = await fetch(apiUrl(`/api/v1/recordings?${params.toString()}`), { headers });
       if (res.status === 401) {
         localStorage.removeItem('te_token');
         router.push('/login');
@@ -114,7 +126,19 @@ export default function SessionsPage() {
 
       if (res.ok) {
         const data = await res.json();
-        setRecordings(Array.isArray(data) ? data : []);
+        if (data && typeof data === 'object' && Array.isArray(data.items)) {
+          setRecordings(data.items);
+          setTotalCount(data.total || 0);
+          setTotalPages(data.total_pages || 1);
+        } else if (Array.isArray(data)) {
+          setRecordings(data);
+          setTotalCount(data.length);
+          setTotalPages(1);
+        } else {
+          setRecordings([]);
+          setTotalCount(0);
+          setTotalPages(1);
+        }
       } else {
         setError('Failed to fetch recorded sessions.');
       }
@@ -124,7 +148,7 @@ export default function SessionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, [router, page, pageSize, userSearch]);
 
   useEffect(() => {
     loadSessions();
@@ -472,12 +496,18 @@ export default function SessionsPage() {
                     type="text"
                     placeholder="Filter replays by Employee Email, User ID, Role, Session ID, or Entry URL..."
                     value={userSearch}
-                    onChange={(e) => setUserSearch(e.target.value)}
-                    className="w-full text-xs text-slate-900 focus:outline-none px-2"
+                    onChange={(e) => {
+                      setUserSearch(e.target.value);
+                      setPage(1);
+                    }}
+                    className="w-full text-xs text-slate-900 focus:outline-none px-2 font-medium"
                   />
                   {userSearch && (
                     <button
-                      onClick={() => setUserSearch('')}
+                      onClick={() => {
+                        setUserSearch('');
+                        setPage(1);
+                      }}
                       className="text-[11px] font-bold text-slate-400 hover:text-slate-700 cursor-pointer"
                     >
                       Clear
@@ -485,12 +515,23 @@ export default function SessionsPage() {
                   )}
                 </div>
 
-                {recordings.filter((rec) => {
-                  if (!userSearch.trim()) return true;
-                  const q = userSearch.toLowerCase();
-                  const hay = `${rec.session_id} ${rec.entry_url || ''} ${rec.user_email || ''} ${rec.user_id || ''} ${rec.user_name || ''} ${rec.user_role || ''}`.toLowerCase();
-                  return hay.includes(q);
-                }).map((rec) => (
+                {totalCount > 0 && (
+                  <PaginationControls
+                    page={page}
+                    pageSize={pageSize}
+                    totalCount={totalCount}
+                    totalPages={totalPages}
+                    onPageChange={(p) => setPage(p)}
+                    onPageSizeChange={(ps) => {
+                      setPageSize(ps);
+                      setPage(1);
+                    }}
+                    pageSizeOptions={[10, 20, 50]}
+                    itemLabel="sessions"
+                  />
+                )}
+
+                {recordings.map((rec) => (
                   <div
                     key={rec.id}
                     className="p-5 rounded-3xl bg-white border border-slate-200/60 shadow-sm hover:shadow-md transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 group"
@@ -558,6 +599,27 @@ export default function SessionsPage() {
                     </button>
                   </div>
                 ))}
+
+                {totalPages > 1 && (
+                  <div className="pt-2">
+                    <PaginationControls
+                      page={page}
+                      pageSize={pageSize}
+                      totalCount={totalCount}
+                      totalPages={totalPages}
+                      onPageChange={(p) => {
+                        setPage(p);
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
+                      onPageSizeChange={(ps) => {
+                        setPageSize(ps);
+                        setPage(1);
+                      }}
+                      pageSizeOptions={[10, 20, 50]}
+                      itemLabel="sessions"
+                    />
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -42,7 +42,7 @@ export default function LivePulsePage() {
   const [visitors, setVisitors] = useState<LiveVisitor[]>([]);
   const [activeCount, setActiveCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(false); // Paused by default to save CPU & avoid 4s flooding
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [simulating, setSimulating] = useState(false);
@@ -93,12 +93,12 @@ export default function LivePulsePage() {
     fetchLiveVisitors();
   }, [fetchLiveVisitors]);
 
-  // Polling loop
+  // Polling loop (Graceful 10s interval when user explicitly unpauses)
   useEffect(() => {
     if (!autoRefresh) return;
     const interval = setInterval(() => {
       fetchLiveVisitors();
-    }, 4000);
+    }, 10000);
     return () => clearInterval(interval);
   }, [autoRefresh, fetchLiveVisitors]);
 
@@ -222,23 +222,32 @@ export default function LivePulsePage() {
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setAutoRefresh(!autoRefresh)}
-                className={`text-xs font-bold px-3 py-1.5 rounded-xl border transition-all flex items-center gap-1.5 ${
+                className={`text-xs font-bold px-3.5 py-2 rounded-xl border transition-all flex items-center gap-2 shadow-xs cursor-pointer ${
                   autoRefresh
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    : 'bg-white text-slate-600 border-slate-200'
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300 ring-2 ring-emerald-500/20'
+                    : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-300'
                 }`}
+                title={autoRefresh ? 'Click to Pause 10s Live Radar' : 'Click to Start 10s Live Radar'}
               >
-                <RotateCw className={`w-3.5 h-3.5 ${autoRefresh ? 'animate-spin' : ''}`} />
-                <span>{autoRefresh ? 'Auto-Polling 4s' : 'Paused'}</span>
+                <span className={`w-2 h-2 rounded-full ${autoRefresh ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+                <span>{autoRefresh ? 'Radar Active (10s)' : 'Radar Paused (Click to Start)'}</span>
+              </button>
+
+              <button
+                onClick={fetchLiveVisitors}
+                className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-xs transition-all cursor-pointer"
+                title="Refresh once"
+              >
+                <RotateCw className="w-3.5 h-3.5" />
               </button>
 
               <button
                 onClick={handleSimulateVisitor}
                 disabled={simulating}
-                className="text-xs font-bold px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-50 hover:scale-105"
+                className="text-xs font-bold px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white shadow-xs transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                <span>{simulating ? 'Emitting Pulse...' : 'Emit Test Visitor'}</span>
+                <span>{simulating ? 'Emitting...' : 'Emit Test Visitor'}</span>
               </button>
             </div>
           </header>

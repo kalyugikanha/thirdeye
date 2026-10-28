@@ -106,24 +106,24 @@ export default function AiGuideWidget({ domain, isConnected, context = 'dashboar
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 font-sans select-none">
-      {/* Floating Launcher Button */}
+    <div className="fixed bottom-5 right-5 z-40 font-sans select-none">
+      {/* Floating Compact Launcher Button */}
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
-          className="group relative flex items-center gap-2.5 px-4 py-3 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-full shadow-[0_10px_30px_rgba(15,23,42,0.4)] hover:shadow-indigo-500/20 hover:scale-105 transition-all border border-slate-700/80 cursor-pointer"
-          title="Ask ThirdEye AI Robot Guide"
+          className="group relative flex items-center justify-center w-11 h-11 bg-slate-900 hover:bg-slate-800 text-white rounded-full shadow-lg hover:shadow-xl hover:scale-105 transition-all border border-slate-700/80 cursor-pointer"
+          title="ThirdEye AI Mitr Guide (Click to Ask)"
+          aria-label="ThirdEye AI Mitr Guide"
         >
-          <div className="relative">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-rose-500 to-indigo-500 flex items-center justify-center text-white shadow-sm">
-              <Bot className="w-4 h-4" />
-            </div>
-            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-400 rounded-full border-2 border-slate-900 animate-pulse" />
+          <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-rose-500 via-indigo-500 to-sky-400 flex items-center justify-center text-white shadow-xs">
+            <Bot className="w-4 h-4" />
           </div>
-          <div className="text-left">
-            <span className="text-xs font-bold block leading-none text-white">AI Robot Guide</span>
-            <span className="text-[10px] text-indigo-300 font-medium">Ask in Hindi / English</span>
-          </div>
+          <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-400 rounded-full border-2 border-slate-900 animate-pulse" />
+          
+          {/* Subtle hover tooltip */}
+          <span className="pointer-events-none absolute right-13 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900 text-white text-[11px] font-semibold px-2.5 py-1 rounded-lg whitespace-nowrap shadow-md border border-slate-800">
+            AI Mitr Guide
+          </span>
         </button>
       )}
 

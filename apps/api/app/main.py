@@ -16,6 +16,7 @@ import random
 import sqlite3
 import csv
 import io
+import math
 from dotenv import load_dotenv
 load_dotenv()  # Load .env file so GEMINI_API_KEY is available
 from app.database import engine, Base, get_db, SessionLocal
@@ -814,6 +815,9 @@ def create_or_append_recording(payload: RecordingPayload, request: Request, db: 
 def list_recordings(
     project_id: Optional[int] = None,
     limit: int = 150,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+    search: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
@@ -821,6 +825,8 @@ def list_recordings(
     is_admin = is_superadmin_user(current_user)
 
     if not is_admin and not user_project_ids:
+        if page is not None:
+            return {"items": [], "total": 0, "page": 1, "page_size": page_size or 20, "total_pages": 1}
         return []
 
     query = db.query(models.SessionRecording)
@@ -832,11 +838,40 @@ def list_recordings(
         if user_project_ids:
             query = query.filter(models.SessionRecording.project_id.in_(user_project_ids))
         elif not is_admin:
+            if page is not None:
+                return {"items": [], "total": 0, "page": 1, "page_size": page_size or 20, "total_pages": 1}
             return []
 
-    safe_limit = min(max(limit, 1), 1000)
-    recordings = query.order_by(models.SessionRecording.created_at.desc()).limit(safe_limit).all()
+    if search and search.strip():
+        term = f"%{search.strip().lower()}%"
+        query = query.filter(
+            or_(
+                func.lower(models.SessionRecording.session_id).like(term),
+                func.lower(getattr(models.SessionRecording, 'user_email', models.SessionRecording.session_id)).like(term),
+                func.lower(getattr(models.SessionRecording, 'user_id', models.SessionRecording.session_id)).like(term)
+            )
+        )
+
+    # Paginated vs legacy limit mode
+    total_count = None
+    if page is not None:
+        total_count = query.count()
+        safe_page_size = min(max(page_size or 20, 1), 100)
+        safe_page = max(page, 1)
+        recordings = query.order_by(models.SessionRecording.created_at.desc()).offset((safe_page - 1) * safe_page_size).limit(safe_page_size).all()
+    else:
+        safe_limit = min(max(limit, 1), 1000)
+        recordings = query.order_by(models.SessionRecording.created_at.desc()).limit(safe_limit).all()
+
     if not recordings:
+        if page is not None:
+            return {
+                "items": [],
+                "total": total_count or 0,
+                "page": max(page or 1, 1),
+                "page_size": page_size or 20,
+                "total_pages": max(math.ceil((total_count or 0) / (page_size or 20)), 1)
+            }
         return []
 
     proj_cache = {p.id: p.domain for p in db.query(models.Project).filter(models.Project.id.in_(user_project_ids)).all()} if user_project_ids else {}
@@ -887,6 +922,16 @@ def list_recordings(
             "user_role": getattr(r, "user_role", None) or client_meta.get("user_role"),
             "event_count": max(ev_cnt, 1)
         })
+
+    if page is not None:
+        safe_ps = page_size or 20
+        return {
+            "items": results,
+            "total": total_count,
+            "page": max(page, 1),
+            "page_size": safe_ps,
+            "total_pages": max(math.ceil((total_count or 0) / safe_ps), 1)
+        }
     return results
 
 @app.get('/api/v1/recordings/{session_id}')

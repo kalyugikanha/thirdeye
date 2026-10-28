@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
+import PaginationControls from '@/components/PaginationControls';
 import { apiUrl } from '@/lib/api';
 import {
   ShieldAlert,
@@ -42,9 +43,11 @@ export default function SecureEyeMasterPage() {
   const [scanning, setScanning] = useState(false);
   const [inspectingLocal, setInspectingLocal] = useState(false);
 
-  // Findings filters
+  // Findings filters & pagination
   const [sevFilter, setSevFilter] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [findingsPage, setFindingsPage] = useState<number>(1);
+  const [findingsPageSize, setFindingsPageSize] = useState<number>(5);
 
   // QA Engine controls
   const [fuzzRunning, setFuzzRunning] = useState(false);
@@ -304,54 +307,54 @@ export default function SecureEyeMasterPage() {
       <main className="flex-1 flex flex-col pt-6 px-6 lg:px-10 overflow-y-auto">
         <div className="w-full max-w-7xl mx-auto flex flex-col gap-6 pb-16">
           
-          {/* Top Header */}
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-slate-950 text-white p-6 rounded-3xl shadow-xl border border-slate-800">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-400">
+          {/* Top Enterprise Header */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5 bg-white border border-slate-200/90 rounded-3xl p-6 shadow-xs">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-600 shadow-xs">
                   <ShieldCheck className="w-6 h-6" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <h1 className="text-xl lg:text-2xl font-extrabold tracking-tight">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
                       SecureEye: Cybersecurity & QA Command Center
                     </h1>
-                    <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
                       3-Phase Blueprint
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Phase 1: QA & Load/Fuzz Engine • Phase 2: Inside (`0.0.0.0`) vs Outside Security Scanner • Phase 3: Continuous Server Protection
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Continuous Attack Surface Monitoring • 0.0.0.0 Exposure Detection • 14-Point Pre-Launch QA Gate
                   </p>
                 </div>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              <div className="px-3.5 py-2 rounded-2xl bg-slate-900 border border-slate-800 text-xs">
-                <span className="text-slate-400 block text-[10px] uppercase font-bold">Ownership Guardrail</span>
-                <span className="font-bold text-emerald-400 flex items-center gap-1.5 mt-0.5">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
+              <div className="px-3.5 py-2.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-xs">
+                <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Asset Guardrail</span>
+                <span className="font-extrabold text-slate-800 flex items-center gap-1.5 mt-0.5 font-mono">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
                   {overview?.project?.domain || 'Verified Workspace'}
                 </span>
               </div>
 
-              <div className="px-4 py-2 rounded-2xl bg-slate-900 border border-slate-800 text-center">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">Security Score</span>
-                <span className="text-lg font-extrabold text-white">{summary.security_score}/100 ({summary.grade})</span>
+              <div className="px-4 py-2.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-center min-w-[110px]">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Security Score</span>
+                <span className="text-lg font-black text-slate-900">{summary.security_score}/100 <span className="text-xs font-bold text-slate-500">({summary.grade})</span></span>
               </div>
 
-              <div className="px-4 py-2 rounded-2xl bg-slate-900 border border-slate-800 text-center">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">Launch Readiness</span>
-                <span className="text-lg font-extrabold text-indigo-400">{summary.launch_readiness_pct}% ({summary.launch_passed}/{summary.launch_total})</span>
+              <div className="px-4 py-2.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-center min-w-[120px]">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Launch Readiness</span>
+                <span className="text-lg font-black text-indigo-600">{summary.launch_readiness_pct}% <span className="text-xs font-bold text-slate-500">({summary.launch_passed}/{summary.launch_total})</span></span>
               </div>
             </div>
           </div>
 
           {/* Scan Bar */}
-          <form onSubmit={handleRunFullScan} className="bg-white border border-slate-200/80 rounded-3xl p-4 shadow-sm flex flex-col lg:flex-row gap-3 items-stretch lg:items-end">
+          <form onSubmit={handleRunFullScan} className="bg-white border border-slate-200/90 rounded-3xl p-4 shadow-xs flex flex-col lg:flex-row gap-3 items-stretch lg:items-end">
             <div className="flex-1">
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
                 Target Asset (Domain / URL)
               </label>
               <input
@@ -359,19 +362,19 @@ export default function SecureEyeMasterPage() {
                 value={targetUrl}
                 onChange={(e) => setTargetUrl(e.target.value)}
                 placeholder="https://selfupcommunity.com"
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-2.5 text-sm font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full bg-slate-50/80 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-mono font-medium text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all"
                 required
               />
             </div>
 
             <div className="w-full lg:w-64">
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
                 Ethical Scan Mode (Section 2C)
               </label>
               <select
                 value={scanMode}
                 onChange={(e) => setScanMode(e.target.value as any)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full bg-slate-50/80 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 cursor-pointer transition-all"
               >
                 <option value="passive">Passive (Headers, TLS, DNS, Recon)</option>
                 <option value="safe_active">Safe Active (+15 Port Scan & Exposure)</option>
@@ -382,17 +385,17 @@ export default function SecureEyeMasterPage() {
             <button
               type="submit"
               disabled={scanning}
-              className="bg-slate-950 hover:bg-slate-800 text-white px-6 py-2.5 rounded-2xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
+              className="bg-slate-900 hover:bg-slate-800 text-white px-5 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-xs disabled:opacity-50 cursor-pointer"
             >
-              {scanning ? <Loader2 className="w-4 h-4 animate-spin text-rose-400" /> : <Lock className="w-4 h-4 text-emerald-400" />}
-              {scanning ? 'Running Stage 1–3 Scan...' : 'Run SecureEye Audit'}
+              {scanning ? <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-400" /> : <Lock className="w-3.5 h-3.5 text-emerald-400" />}
+              <span>{scanning ? 'Running Stage 1–3 Scan...' : 'Run SecureEye Audit'}</span>
             </button>
 
             <button
               type="button"
               onClick={handleInspectServerSockets}
               disabled={inspectingLocal}
-              className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-4 py-2.5 rounded-2xl font-bold text-xs transition-all flex items-center justify-center gap-1.5"
+              className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/90 px-4 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               title="Inspect local server listening sockets (ss -tlnp) to detect 0.0.0.0 binds"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${inspectingLocal ? 'animate-spin' : ''}`} />
@@ -400,15 +403,15 @@ export default function SecureEyeMasterPage() {
             </button>
           </form>
 
-          {/* 6-Tab Navigation */}
-          <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-2">
+          {/* Sleek Horizontal Segmented Control Track */}
+          <div className="bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/70 flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
             {[
               { id: 'surface', label: '1. Attack Surface & 0.0.0.0 Radar', icon: Server },
               { id: 'findings', label: `2. Findings Tracker (${summary.open_findings_count} Open)`, icon: ShieldAlert },
-              { id: 'qa', label: '3. Phase 1: QA, Fuzzer & Load Engine', icon: Gauge },
+              { id: 'qa', label: '3. QA, Fuzzer & Load Engine', icon: Gauge },
               { id: 'launch', label: `4. 14-Point Launch Gate (${summary.launch_readiness_pct}%)`, icon: ClipboardCheck },
-              { id: 'playbooks', label: '5. Phase 3: Server Hardening & Logs', icon: Terminal },
-              { id: 'catalog', label: '6. Blueprint Attack Catalog (12 Causes)', icon: BookOpen },
+              { id: 'playbooks', label: '5. Server Hardening & Logs', icon: Terminal },
+              { id: 'catalog', label: '6. Blueprint Attack Catalog', icon: BookOpen },
             ].map((t) => {
               const Icon = t.icon;
               const active = activeTab === t.id;
@@ -416,13 +419,13 @@ export default function SecureEyeMasterPage() {
                 <button
                   key={t.id}
                   onClick={() => setActiveTab(t.id as any)}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold transition-all ${
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
                     active
-                      ? 'bg-slate-900 text-white shadow-sm'
-                      : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/70'
+                      ? 'bg-white text-slate-900 shadow-xs border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                   }`}
                 >
-                  <Icon className={`w-4 h-4 ${active ? 'text-rose-400' : 'text-slate-400'}`} />
+                  <Icon className={`w-3.5 h-3.5 ${active ? 'text-indigo-600' : 'text-slate-400'}`} />
                   <span>{t.label}</span>
                 </button>
               );
@@ -667,7 +670,7 @@ export default function SecureEyeMasterPage() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {findingsList.map((f: any) => (
+                  {findingsList.slice((findingsPage - 1) * findingsPageSize, findingsPage * findingsPageSize).map((f: any) => (
                     <div key={f.id} className="bg-white border border-slate-200/80 rounded-3xl p-6 shadow-sm space-y-4">
                       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-100 pb-3">
                         <div className="space-y-1">
@@ -758,6 +761,24 @@ export default function SecureEyeMasterPage() {
                       </div>
                     </div>
                   ))}
+
+                  {findingsList.length > findingsPageSize && (
+                    <div className="pt-2">
+                      <PaginationControls
+                        page={findingsPage}
+                        pageSize={findingsPageSize}
+                        totalCount={findingsList.length}
+                        totalPages={Math.max(Math.ceil(findingsList.length / findingsPageSize), 1)}
+                        onPageChange={(p) => setFindingsPage(p)}
+                        onPageSizeChange={(ps) => {
+                          setFindingsPageSize(ps);
+                          setFindingsPage(1);
+                        }}
+                        pageSizeOptions={[5, 10, 20]}
+                        itemLabel="findings"
+                      />
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1052,24 +1073,24 @@ export default function SecureEyeMasterPage() {
           {/* ================= TAB 5: PHASE 3 SERVER HARDENING PLAYBOOKS & AUDIT LOGS ================= */}
           {activeTab === 'playbooks' && (
             <div className="space-y-6">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
                 {[
                   { key: 'ufw', title: '1. UFW Default-Deny & 0.0.0.0 Lockdown', code: catalog?.playbooks?.ufw_lockdown || '' },
                   { key: 'nginx', title: '2. Nginx Reverse-Proxy & OWASP Headers', code: catalog?.playbooks?.nginx_hardening || '' },
                   { key: 'agent', title: '3. Inside-View Server Agent (secureeye-agent.py)', code: catalog?.playbooks?.inside_agent_script || '' },
                 ].map((pb) => (
-                  <div key={pb.key} className="bg-white border border-slate-200/80 rounded-3xl p-5 shadow-sm flex flex-col justify-between space-y-3">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-800">{pb.title}</h3>
+                  <div key={pb.key} className="bg-white border border-slate-200/90 rounded-3xl p-5 shadow-xs flex flex-col justify-between space-y-3">
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                      <h3 className="text-xs font-black uppercase tracking-tight text-slate-900">{pb.title}</h3>
                       <button
                         onClick={() => copyCode(pb.key, pb.code)}
-                        className="px-2.5 py-1 rounded-xl bg-slate-900 text-white text-[10px] font-bold flex items-center gap-1"
+                        className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold flex items-center gap-1.5 shadow-xs cursor-pointer transition-all"
                       >
                         {copiedKey === pb.key ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
                         {copiedKey === pb.key ? 'Copied' : 'Copy'}
                       </button>
                     </div>
-                    <pre className="bg-slate-950 text-slate-200 p-4 rounded-2xl text-[11px] font-mono overflow-x-auto max-h-72">
+                    <pre className="bg-slate-950 text-slate-200 p-4 rounded-2xl text-[11px] font-mono overflow-x-auto max-h-80 leading-relaxed [scrollbar-width:thin]">
                       {pb.code}
                     </pre>
                   </div>
