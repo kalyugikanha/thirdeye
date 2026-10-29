@@ -830,17 +830,17 @@ export default function SessionsPage() {
             </div>
 
             {/* Modal Content: Dual Pane Player & Timeline / AI Diagnostics */}
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-5 min-h-[490px] overflow-hidden">
+            <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-5 min-h-[560px] overflow-hidden">
               {/* Left Pane: Replay Player */}
-              <div className="lg:col-span-8 flex flex-col justify-center items-center bg-slate-950/70 rounded-2xl border border-slate-850 p-2 overflow-hidden relative">
+              <div className="lg:col-span-8 flex flex-col justify-start items-center bg-slate-950/70 rounded-2xl border border-slate-850 p-3 overflow-y-auto relative">
                 {loadingReplay ? (
-                  <div className="flex flex-col items-center justify-center text-slate-400 py-16">
+                  <div className="flex flex-col items-center justify-center text-slate-400 py-24 my-auto">
                     <Loader2 className="w-9 h-9 animate-spin mb-3 text-rose-500" />
                     <p className="text-sm font-bold text-slate-200">Reconstructing DOM & CSS mutations...</p>
                     <span className="text-xs text-slate-500 mt-1">Decompressing full snapshot payload</span>
                   </div>
                 ) : replayError ? (
-                  <div className="text-center p-8 bg-slate-900/60 rounded-3xl border border-slate-800">
+                  <div className="text-center p-8 bg-slate-900/60 rounded-3xl border border-slate-800 my-auto">
                     <AlertCircle className="w-9 h-9 text-rose-500 mx-auto mb-2" />
                     <p className="text-sm font-medium text-slate-200">{replayError}</p>
                     <button
@@ -853,8 +853,9 @@ export default function SessionsPage() {
                 ) : replayEvents ? (
                   <ReplayPlayer 
                     events={replayEvents} 
+                    timeline={timeline}
                     width={getDeviceBadge(activeSession).type === 'mobile' ? 360 : 680} 
-                    height={getDeviceBadge(activeSession).type === 'mobile' ? 520 : 450} 
+                    height={getDeviceBadge(activeSession).type === 'mobile' ? 500 : 420} 
                     isMobile={getDeviceBadge(activeSession).type === 'mobile'}
                     seekTime={seekTime} 
                     siteUrl={activeSession?.entry_url || clientDomain} 
@@ -863,7 +864,7 @@ export default function SessionsPage() {
               </div>
 
               {/* Right Pane: Synchronized Timeline & AI Copilot */}
-              <div className="lg:col-span-4 flex flex-col bg-slate-900/50 rounded-2xl border border-slate-800/80 p-4 h-[490px] overflow-hidden">
+              <div className="lg:col-span-4 flex flex-col bg-slate-900/50 rounded-2xl border border-slate-800/80 p-4 h-[560px] overflow-hidden">
                 {/* Tab switcher */}
                 <div className="flex items-center gap-1.5 p-1 bg-slate-950/80 rounded-xl mb-3 border border-slate-800/60 flex-shrink-0">
                   <button
