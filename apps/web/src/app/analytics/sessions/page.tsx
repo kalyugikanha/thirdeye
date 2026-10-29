@@ -6,6 +6,7 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import Sidebar from '@/components/Sidebar';
 import PaginationControls from '@/components/PaginationControls';
+import DateRangePicker, { DateRangeValue } from '@/components/DateRangePicker';
 import { apiUrl, API_BASE } from '@/lib/api';
 import {
   BarChart as BarChartIcon,
@@ -110,6 +111,13 @@ export default function SessionsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Date Range state
+  const [dateRange, setDateRange] = useState<DateRangeValue>({
+    preset: 'all',
+    label: 'All Time'
+  });
+  const [exportingCsv, setExportingCsv] = useState(false);
+
   // Pagination state
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -155,6 +163,8 @@ export default function SessionsPage() {
       params.append('page', String(page));
       params.append('page_size', String(pageSize));
       if (userSearch.trim()) params.append('search', userSearch.trim());
+      if (dateRange.fromDate) params.append('from_date', dateRange.fromDate);
+      if (dateRange.toDate) params.append('to_date', dateRange.toDate);
 
       const res = await fetch(apiUrl(`/api/v1/recordings?${params.toString()}`), { headers });
       if (res.status === 401) {
@@ -187,7 +197,39 @@ export default function SessionsPage() {
     } finally {
       setLoading(false);
     }
-  }, [router, page, pageSize, userSearch]);
+  }, [router, page, pageSize, userSearch, dateRange]);
+
+  const handleExportCsv = async () => {
+    try {
+      setExportingCsv(true);
+      const token = typeof window !== 'undefined' ? localStorage.getItem('te_token') : null;
+      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const activePid = typeof window !== 'undefined' ? localStorage.getItem('te_active_project_id') : null;
+
+      const params = new URLSearchParams();
+      if (activePid) params.append('project_id', activePid);
+      if (userSearch.trim()) params.append('search', userSearch.trim());
+      if (dateRange.fromDate) params.append('from_date', dateRange.fromDate);
+      if (dateRange.toDate) params.append('to_date', dateRange.toDate);
+
+      const res = await fetch(apiUrl(`/api/v1/recordings/export/csv?${params.toString()}`), { headers });
+      if (!res.ok) throw new Error('Failed to export CSV');
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `thirdeye_sessions_${dateRange.preset}_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('CSV Export Error:', err);
+    } finally {
+      setExportingCsv(false);
+    }
+  };
 
   useEffect(() => {
     loadSessions();
@@ -530,28 +572,56 @@ export default function SessionsPage() {
               </div>
             ) : (
               <div className="space-y-4">
-                <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between gap-3">
-                  <input
-                    type="text"
-                    placeholder="Filter replays by Employee Email, User ID, Role, Session ID, or Entry URL..."
-                    value={userSearch}
-                    onChange={(e) => {
-                      setUserSearch(e.target.value);
-                      setPage(1);
-                    }}
-                    className="w-full text-xs text-slate-900 focus:outline-none px-2 font-medium"
-                  />
-                  {userSearch && (
-                    <button
-                      onClick={() => {
-                        setUserSearch('');
+                {/* Search, Date Range Filter & CSV Export Toolbar */}
+                <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+                  {/* Search Input */}
+                  <div className="flex-1 bg-white p-3 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between gap-3">
+                    <input
+                      type="text"
+                      placeholder="Filter replays by Employee Email, User ID, Role, Session ID, or Entry URL..."
+                      value={userSearch}
+                      onChange={(e) => {
+                        setUserSearch(e.target.value);
                         setPage(1);
                       }}
-                      className="text-[11px] font-bold text-slate-400 hover:text-slate-700 cursor-pointer"
-                    >
-                      Clear
-                    </button>
-                  )}
+                      className="w-full text-xs text-slate-900 focus:outline-none px-2 font-medium"
+                    />
+                    {userSearch && (
+                      <button
+                        onClick={() => {
+                          setUserSearch('');
+                          setPage(1);
+                        }}
+                        className="text-[11px] font-bold text-slate-400 hover:text-slate-700 cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Date Range Picker Component */}
+                  <DateRangePicker
+                    value={dateRange}
+                    onChange={(newVal) => {
+                      setDateRange(newVal);
+                      setPage(1);
+                    }}
+                  />
+
+                  {/* Export CSV Button */}
+                  <button
+                    onClick={handleExportCsv}
+                    disabled={exportingCsv || totalCount === 0}
+                    className="px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-200/80 text-slate-700 rounded-2xl text-xs font-bold shadow-2xs transition-all hover:scale-[1.02] flex items-center gap-2 flex-shrink-0 disabled:opacity-50 cursor-pointer"
+                    title="Export filtered sessions as CSV"
+                  >
+                    {exportingCsv ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-500" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5 text-slate-500" />
+                    )}
+                    <span>{exportingCsv ? 'Exporting...' : 'Export CSV'}</span>
+                  </button>
                 </div>
 
                 {totalCount > 0 && (

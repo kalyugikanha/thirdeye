@@ -26,9 +26,12 @@ import {
   Sparkles,
   BarChart3,
   Filter,
-  PlayCircle
+  PlayCircle,
+  Download,
+  Loader2
 } from 'lucide-react';
 import Link from 'next/link';
+import DateRangePicker, { DateRangeValue } from '@/components/DateRangePicker';
 
 interface ClickPoint {
   x: number;
@@ -69,6 +72,13 @@ export default function HeatmapPage() {
   const [deviceStats, setDeviceStats] = useState<DeviceBreakdown>({ desktop: 0, mobile: 0, tablet: 0 });
   const [loading, setLoading] = useState(true);
 
+  // Date Range state
+  const [dateRange, setDateRange] = useState<DateRangeValue>({
+    preset: 'all',
+    label: 'All Time'
+  });
+  const [exportingCsv, setExportingCsv] = useState(false);
+
   // View modes
   const [viewMode, setViewMode] = useState<'elements' | 'thermal' | 'scroll'>('elements');
   const [deviceView, setDeviceView] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
@@ -81,7 +91,12 @@ export default function HeatmapPage() {
     if (!token) return router.push('/login');
     try {
       setLoading(true);
-      const res = await fetch(apiUrl('/api/v1/analytics/heatmaps'), {
+      const params = new URLSearchParams();
+      if (dateRange.fromDate) params.append('from_date', dateRange.fromDate);
+      if (dateRange.toDate) params.append('to_date', dateRange.toDate);
+      const qStr = params.toString() ? `?${params.toString()}` : '';
+
+      const res = await fetch(apiUrl(`/api/v1/analytics/heatmaps${qStr}`), {
         headers: { Authorization: `Bearer ${token}` }
       });
 
@@ -126,9 +141,38 @@ export default function HeatmapPage() {
     }
   };
 
+  const handleExportCsv = async () => {
+    try {
+      setExportingCsv(true);
+      const token = localStorage.getItem('te_token');
+      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const params = new URLSearchParams();
+      if (dateRange.fromDate) params.append('from_date', dateRange.fromDate);
+      if (dateRange.toDate) params.append('to_date', dateRange.toDate);
+      if (selectedUrl) params.append('target_url', selectedUrl);
+
+      const res = await fetch(apiUrl(`/api/v1/analytics/heatmaps/export/csv?${params.toString()}`), { headers });
+      if (!res.ok) throw new Error('Failed to export CSV');
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `thirdeye_heatmap_clusters_${dateRange.preset}_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Heatmap CSV Export Error:', err);
+    } finally {
+      setExportingCsv(false);
+    }
+  };
+
   useEffect(() => {
     fetchHeatmaps();
-  }, []);
+  }, [dateRange]);
 
   // Filter points for the currently selected URL
   const activePoints = useMemo(() => {
@@ -315,11 +359,31 @@ export default function HeatmapPage() {
               </p>
             </div>
 
-            <div className="flex items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <DateRangePicker
+                value={dateRange}
+                onChange={(newVal) => setDateRange(newVal)}
+              />
+
+              <button
+                onClick={handleExportCsv}
+                disabled={exportingCsv || totalClicks === 0}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-2xs transition-all disabled:opacity-50 cursor-pointer"
+                title="Export aggregated element click clusters as CSV"
+              >
+                {exportingCsv ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-500" />
+                ) : (
+                  <Download className="w-3.5 h-3.5 text-slate-500" />
+                )}
+                <span className="hidden sm:inline">{exportingCsv ? 'Exporting...' : 'Export Clicks CSV'}</span>
+              </button>
+
               <button
                 onClick={fetchHeatmaps}
                 disabled={loading}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-2xl text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-2xs transition-all"
+                title="Refresh Heatmap Data"
               >
                 <RefreshCw className={`w-3.5 h-3.5 text-slate-500 ${loading ? 'animate-spin text-orange-500' : ''}`} />
                 <span>{loading ? 'Refreshing...' : 'Refresh'}</span>
@@ -330,7 +394,7 @@ export default function HeatmapPage() {
                   href={selectedUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-3.5 py-2 rounded-2xl text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 shadow-sm transition-all flex items-center gap-1.5"
+                  className="px-3.5 py-2 rounded-2xl text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 shadow-2xs transition-all flex items-center gap-1.5"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                   <span>Open Live Page</span>

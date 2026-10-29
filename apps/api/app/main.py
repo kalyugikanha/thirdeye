@@ -498,6 +498,34 @@ def resolve_device_type(props: Optional[dict]) -> str:
         return 'desktop'
     return 'mobile'
 
+def parse_date_bounds(from_date: Optional[str], to_date: Optional[str]):
+    """Safely parse from_date and to_date strings into start and end datetimes."""
+    start_dt = None
+    end_dt = None
+    if from_date and from_date.strip():
+        try:
+            val = from_date.strip()
+            if 'T' in val:
+                start_dt = datetime.fromisoformat(val.replace('Z', ''))
+            else:
+                parts = [int(p) for p in val.split('-')]
+                start_dt = datetime(parts[0], parts[1], parts[2], 0, 0, 0)
+        except Exception:
+            start_dt = None
+
+    if to_date and to_date.strip():
+        try:
+            val = to_date.strip()
+            if 'T' in val:
+                end_dt = datetime.fromisoformat(val.replace('Z', ''))
+            else:
+                parts = [int(p) for p in val.split('-')]
+                end_dt = datetime(parts[0], parts[1], parts[2], 23, 59, 59, 999999)
+        except Exception:
+            end_dt = None
+
+    return start_dt, end_dt
+
 def update_live_visitor_presence(db: Session, project_id: int, session_id: str, url: str = None, referrer: str = None, properties: dict = None):
     try:
         props = properties or {}
@@ -880,6 +908,8 @@ def list_recordings(
     page: Optional[int] = None,
     page_size: Optional[int] = None,
     search: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
@@ -913,6 +943,12 @@ def list_recordings(
                 func.lower(getattr(models.SessionRecording, 'user_id', models.SessionRecording.session_id)).like(term)
             )
         )
+
+    start_dt, end_dt = parse_date_bounds(from_date, to_date)
+    if start_dt:
+        query = query.filter(models.SessionRecording.created_at >= start_dt)
+    if end_dt:
+        query = query.filter(models.SessionRecording.created_at <= end_dt)
 
     # Paginated vs legacy limit mode
     total_count = None
@@ -999,6 +1035,102 @@ def list_recordings(
             "total_pages": max(math.ceil((total_count or 0) / safe_ps), 1)
         }
     return results
+
+@app.get('/api/v1/recordings/export/csv')
+def export_recordings_csv(
+    project_id: Optional[int] = None,
+    search: Optional[str] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    user_project_ids = get_user_project_ids(db, current_user)
+    is_admin = is_superadmin_user(current_user)
+
+    if not is_admin and not user_project_ids:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    query = db.query(models.SessionRecording)
+    if project_id is not None:
+        if not is_admin and project_id not in user_project_ids:
+            raise HTTPException(status_code=403, detail="Access denied")
+        query = query.filter(models.SessionRecording.project_id == project_id)
+    else:
+        if user_project_ids:
+            query = query.filter(models.SessionRecording.project_id.in_(user_project_ids))
+
+    if search and search.strip():
+        term = f"%{search.strip().lower()}%"
+        query = query.filter(
+            or_(
+                func.lower(models.SessionRecording.session_id).like(term),
+                func.lower(getattr(models.SessionRecording, 'user_email', models.SessionRecording.session_id)).like(term),
+                func.lower(getattr(models.SessionRecording, 'user_id', models.SessionRecording.session_id)).like(term)
+            )
+        )
+
+    start_dt, end_dt = parse_date_bounds(from_date, to_date)
+    if start_dt:
+        query = query.filter(models.SessionRecording.created_at >= start_dt)
+    if end_dt:
+        query = query.filter(models.SessionRecording.created_at <= end_dt)
+
+    recordings = query.order_by(models.SessionRecording.created_at.desc()).limit(3000).all()
+
+    sids = [r.session_id for r in recordings if r.session_id]
+    session_event_map = {}
+    if sids:
+        for sid_val, ev_cnt, ev_url, ev_props in db.query(
+            models.Event.session_id,
+            func.count(models.Event.id),
+            models.Event.url,
+            models.Event.properties
+        ).filter(models.Event.session_id.in_(sids)).group_by(models.Event.session_id).all():
+            session_event_map[sid_val] = (
+                int(ev_cnt or 1),
+                ev_url or "",
+                ev_props if isinstance(ev_props, dict) else {}
+            )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Session ID", "Created At (UTC)", "Duration (Seconds)", "Entry URL",
+        "Device Type", "Browser", "Operating System", "Screen Resolution",
+        "Events Count", "User ID", "User Email"
+    ])
+
+    for r in recordings:
+        ev_cnt, first_url, client_meta = session_event_map.get(r.session_id, (1, "", {}))
+        detected_dev = resolve_device_type(client_meta)
+        default_os = "Android" if detected_dev == "mobile" else "Windows"
+        default_screen = "384x729" if detected_dev == "mobile" else "1920x1080"
+        iso_created = r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else ""
+
+        writer.writerow([
+            r.session_id,
+            iso_created,
+            r.duration or 0,
+            first_url or "",
+            detected_dev.capitalize(),
+            client_meta.get("browser", "Chrome"),
+            client_meta.get("os", default_os),
+            client_meta.get("screen", default_screen),
+            ev_cnt or 1,
+            getattr(r, "user_id", None) or client_meta.get("user_id") or "",
+            getattr(r, "user_email", None) or client_meta.get("user_email") or ""
+        ])
+
+    filename = f"thirdeye_sessions_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+    )
 
 @app.get('/api/v1/recordings/{session_id}')
 @app.get('/api/v1/recordings/{session_id}/replay')
@@ -3097,7 +3229,13 @@ def remove_team_member(user_id: int, db: Session = Depends(get_db), current_user
 
 # ===================== PHASE 3: AGGREGATED HEATMAPS =====================
 @app.get('/api/v1/analytics/heatmaps')
-def get_click_heatmap(project_id: Optional[int] = None, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def get_click_heatmap(
+    project_id: Optional[int] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
     user_project_ids = get_user_project_ids(db, current_user)
     if not user_project_ids:
         return {"total_clicks": 0, "points": [], "urls": [], "domain": "", "device_breakdown": {"desktop": 0, "mobile": 0, "tablet": 0}}
@@ -3106,11 +3244,19 @@ def get_click_heatmap(project_id: Optional[int] = None, db: Session = Depends(ge
     project = db.query(models.Project).filter(models.Project.id.in_(target_pids)).first()
     domain = project.domain if project else ""
 
-    # Fetch latest 1000 click events for fast rendering
-    events = db.query(models.Event).filter(
+    query = db.query(models.Event).filter(
         models.Event.project_id.in_(target_pids),
         models.Event.event_type == 'click'
-    ).order_by(models.Event.id.desc()).limit(1000).all()
+    )
+
+    start_dt, end_dt = parse_date_bounds(from_date, to_date)
+    if start_dt:
+        query = query.filter(models.Event.created_at >= start_dt)
+    if end_dt:
+        query = query.filter(models.Event.created_at <= end_dt)
+
+    # Fetch latest 1500 click events for fast rendering
+    events = query.order_by(models.Event.id.desc()).limit(1500).all()
 
     heatmaps = []
     distinct_urls = set()
@@ -3160,6 +3306,104 @@ def get_click_heatmap(project_id: Optional[int] = None, db: Session = Depends(ge
             "tablet": tablet_count
         }
     }
+
+@app.get('/api/v1/analytics/heatmaps/export/csv')
+def export_heatmap_csv(
+    project_id: Optional[int] = None,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    target_url: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    user_project_ids = get_user_project_ids(db, current_user)
+    if not user_project_ids:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    target_pids = [project_id] if (project_id and project_id in user_project_ids) else user_project_ids
+    query = db.query(models.Event).filter(
+        models.Event.project_id.in_(target_pids),
+        models.Event.event_type == 'click'
+    )
+
+    start_dt, end_dt = parse_date_bounds(from_date, to_date)
+    if start_dt:
+        query = query.filter(models.Event.created_at >= start_dt)
+    if end_dt:
+        query = query.filter(models.Event.created_at <= end_dt)
+
+    if target_url and target_url.strip():
+        clean_u = target_url.strip().replace("https://", "").replace("http://", "").rstrip("/")
+        query = query.filter(models.Event.url.like(f"%{clean_u}%"))
+
+    events = query.order_by(models.Event.id.desc()).limit(3000).all()
+
+    clusters_map = {}
+    total_valid = 0
+
+    for e in events:
+        props = e.properties or {}
+        if 'x' in props and 'y' in props:
+            total_valid += 1
+            tag = str(props.get('tag') or 'element').lower()
+            text = str(props.get('text') or '').strip()
+            dev = resolve_device_type(props)
+            label = text if len(text) >= 2 else f"<{tag}> element"
+            key = f"{label}_{tag}_{e.url or ''}"
+
+            if key not in clusters_map:
+                clusters_map[key] = {
+                    "label": label,
+                    "tag": tag,
+                    "url": e.url or "",
+                    "count": 0,
+                    "sum_x": 0,
+                    "sum_y": 0,
+                    "mobile": 0,
+                    "desktop": 0,
+                    "tablet": 0
+                }
+            clusters_map[key]["count"] += 1
+            clusters_map[key]["sum_x"] += (props.get('x') or 50)
+            clusters_map[key]["sum_y"] += (props.get('y') or 50)
+            clusters_map[key][dev] = clusters_map[key].get(dev, 0) + 1
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Element Label", "HTML Tag", "Clicks Count", "Click Share (%)",
+        "Mobile Clicks", "Desktop Clicks", "Tablet Clicks",
+        "Avg X Position (%)", "Avg Y Position (%)", "Page URL"
+    ])
+
+    sorted_clusters = sorted(clusters_map.values(), key=lambda c: c["count"], reverse=True)
+    for c in sorted_clusters:
+        cnt = c["count"]
+        share_pct = round((cnt / max(total_valid, 1)) * 100, 1)
+        avg_x = round(c["sum_x"] / cnt)
+        avg_y = round(c["sum_y"] / cnt)
+        writer.writerow([
+            c["label"],
+            c["tag"],
+            cnt,
+            f"{share_pct}%",
+            c["mobile"],
+            c["desktop"],
+            c["tablet"],
+            f"{avg_x}%",
+            f"{avg_y}%",
+            c["url"]
+        ])
+
+    filename = f"thirdeye_heatmap_clusters_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+    )
 
 
 # ===================== PHASE 4: PUBLIC STATUS PAGES =====================
