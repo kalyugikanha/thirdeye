@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, JSON, Index, Text, Float
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, JSON, Index, Text, Float, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database import Base
@@ -238,10 +238,33 @@ class StorageConfig(Base):
     region = Column(String, default='us-east-1')
     webhook_url = Column(String, nullable=True)
     custom_folder_path = Column(String, nullable=True)
+    retention_days = Column(Integer, default=30)  # 30, 60, 90, 0=unlimited
+    last_vacuum_at = Column(DateTime, nullable=True)
+    bytes_reclaimed = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship('Project', back_populates='storage_config')
+
+
+class AnalyticsDailyRollup(Base):
+    __tablename__ = 'analytics_daily_rollups'
+    __table_args__ = (
+        Index('idx_rollups_proj_date', 'project_id', 'date'),
+        UniqueConstraint('project_id', 'date', 'event_type', name='uq_rollup_proj_date_type'),
+    )
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    date = Column(String, index=True)  # YYYY-MM-DD
+    event_type = Column(String, index=True)
+    event_count = Column(Integer, default=0)
+    unique_sessions = Column(Integer, default=0)
+    mobile_count = Column(Integer, default=0)
+    desktop_count = Column(Integer, default=0)
+    tablet_count = Column(Integer, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship('Project')
 
 
 class LiveVisitor(Base):

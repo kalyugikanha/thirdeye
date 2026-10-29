@@ -20,6 +20,8 @@ if DATABASE_URL.startswith('sqlite'):
             cursor.execute("PRAGMA journal_mode=WAL;")
             cursor.execute("PRAGMA synchronous=NORMAL;")
             cursor.execute("PRAGMA cache_size=-64000;")  # 64MB memory cache
+            cursor.execute("PRAGMA mmap_size=268435456;") # 256MB memory mapping
+            cursor.execute("PRAGMA wal_autocheckpoint=1000;")
             cursor.execute("PRAGMA busy_timeout=5000;")  # 5s busy wait
             cursor.execute("PRAGMA temp_store=MEMORY;")
         finally:
