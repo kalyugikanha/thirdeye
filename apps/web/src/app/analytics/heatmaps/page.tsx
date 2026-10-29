@@ -37,6 +37,7 @@ interface ClickPoint {
   session_id: string;
   tag?: string;
   text?: string;
+  device?: string;
 }
 
 interface DeviceBreakdown {
@@ -100,6 +101,9 @@ export default function HeatmapPage() {
         }
         if (data.device_breakdown) {
           setDeviceStats(data.device_breakdown);
+          if ((data.device_breakdown.mobile || 0) > (data.device_breakdown.desktop || 0)) {
+            setDeviceView('mobile');
+          }
         }
 
         const distinctUrls: string[] = data.urls || [];
@@ -795,31 +799,66 @@ export default function HeatmapPage() {
                   <span>Device Traffic Breakdown</span>
                 </h4>
 
-                <div className="grid grid-cols-3 gap-2 pt-1 text-center">
-                  <div className="p-2.5 rounded-2xl bg-slate-50 border border-slate-100">
-                    <Laptop className="w-4 h-4 text-blue-600 mx-auto mb-1" />
-                    <span className="text-[10px] text-slate-400 block font-semibold">Desktop</span>
-                    <span className="text-sm font-black text-slate-900 block font-mono">
-                      {deviceStats.desktop}
-                    </span>
-                  </div>
+                {(() => {
+                  const total = (deviceStats.desktop + deviceStats.mobile + deviceStats.tablet) || 1;
+                  const dPct = Math.round((deviceStats.desktop / total) * 100);
+                  const mPct = Math.round((deviceStats.mobile / total) * 100);
+                  const tPct = Math.max(0, 100 - dPct - mPct);
+                  return (
+                    <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+                      <div
+                        onClick={() => setDeviceView('desktop')}
+                        className={`p-2.5 rounded-2xl border cursor-pointer transition-all ${
+                          deviceView === 'desktop' ? 'bg-blue-50 border-blue-200 shadow-xs ring-1 ring-blue-300' : 'bg-slate-50 border-slate-100 hover:bg-slate-100/60'
+                        }`}
+                        title="Click to view Desktop Canvas"
+                      >
+                        <Laptop className="w-4 h-4 text-blue-600 mx-auto mb-1" />
+                        <span className="text-[10px] text-slate-400 block font-semibold">Desktop</span>
+                        <span className="text-sm font-black text-slate-900 block font-mono">
+                          {deviceStats.desktop}
+                        </span>
+                        <span className="text-[10px] text-blue-600 font-bold font-mono">
+                          {dPct}%
+                        </span>
+                      </div>
 
-                  <div className="p-2.5 rounded-2xl bg-slate-50 border border-slate-100">
-                    <Smartphone className="w-4 h-4 text-emerald-600 mx-auto mb-1" />
-                    <span className="text-[10px] text-slate-400 block font-semibold">Mobile</span>
-                    <span className="text-sm font-black text-slate-900 block font-mono">
-                      {deviceStats.mobile}
-                    </span>
-                  </div>
+                      <div
+                        onClick={() => setDeviceView('mobile')}
+                        className={`p-2.5 rounded-2xl border cursor-pointer transition-all ${
+                          deviceView === 'mobile' ? 'bg-emerald-50 border-emerald-200 shadow-xs ring-1 ring-emerald-300' : 'bg-slate-50 border-slate-100 hover:bg-slate-100/60'
+                        }`}
+                        title="Click to view Mobile Canvas"
+                      >
+                        <Smartphone className="w-4 h-4 text-emerald-600 mx-auto mb-1" />
+                        <span className="text-[10px] text-slate-400 block font-semibold">Mobile</span>
+                        <span className="text-sm font-black text-slate-900 block font-mono">
+                          {deviceStats.mobile}
+                        </span>
+                        <span className="text-[10px] text-emerald-600 font-bold font-mono">
+                          {mPct}%
+                        </span>
+                      </div>
 
-                  <div className="p-2.5 rounded-2xl bg-slate-50 border border-slate-100">
-                    <Tablet className="w-4 h-4 text-purple-600 mx-auto mb-1" />
-                    <span className="text-[10px] text-slate-400 block font-semibold">Tablet</span>
-                    <span className="text-sm font-black text-slate-900 block font-mono">
-                      {deviceStats.tablet}
-                    </span>
-                  </div>
-                </div>
+                      <div
+                        onClick={() => setDeviceView('tablet')}
+                        className={`p-2.5 rounded-2xl border cursor-pointer transition-all ${
+                          deviceView === 'tablet' ? 'bg-purple-50 border-purple-200 shadow-xs ring-1 ring-purple-300' : 'bg-slate-50 border-slate-100 hover:bg-slate-100/60'
+                        }`}
+                        title="Click to view Tablet Canvas"
+                      >
+                        <Tablet className="w-4 h-4 text-purple-600 mx-auto mb-1" />
+                        <span className="text-[10px] text-slate-400 block font-semibold">Tablet</span>
+                        <span className="text-sm font-black text-slate-900 block font-mono">
+                          {deviceStats.tablet}
+                        </span>
+                        <span className="text-[10px] text-purple-600 font-bold font-mono">
+                          {tPct}%
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Pro Tip Guide Card */}

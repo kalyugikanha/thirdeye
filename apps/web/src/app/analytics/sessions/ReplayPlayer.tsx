@@ -11,6 +11,7 @@ interface ReplayPlayerProps {
   height?: number;
   seekTime?: number | null;
   siteUrl?: string;
+  isMobile?: boolean;
 }
 
 /**
@@ -69,9 +70,22 @@ export function compressIdlePauses(rawEvents: any[], maxGapMs = 2500, targetGapM
   };
 }
 
-export default function ReplayPlayer({ events, width = 850, height = 480, seekTime, siteUrl }: ReplayPlayerProps) {
+export default function ReplayPlayer({ events, width = 850, height = 480, seekTime, siteUrl, isMobile }: ReplayPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerInstanceRef = useRef<any>(null);
+
+  // Auto-detect mobile from rrweb meta event if not explicitly specified
+  const detectedMobile = useMemo(() => {
+    if (typeof isMobile === 'boolean') return isMobile;
+    const metaEv = events?.find(e => e.type === 4 && e.data && e.data.width);
+    if (metaEv && metaEv.data && metaEv.data.width) {
+      return metaEv.data.width < 600;
+    }
+    return false;
+  }, [events, isMobile]);
+
+  const activeWidth = detectedMobile ? Math.min(width, 360) : width;
+  const activeHeight = detectedMobile ? Math.max(height, 500) : height;
 
   // Process and compress idle dead pauses
   const { compressedEvents, pausesCompressed, timeSavedMs, tabSwitches } = useMemo(() => {
@@ -109,8 +123,8 @@ export default function ReplayPlayer({ events, width = 850, height = 480, seekTi
         target: containerRef.current,
         props: {
           events: compressedEvents,
-          width,
-          height,
+          width: activeWidth,
+          height: activeHeight,
           autoPlay: true,
           showController: true,
           skipInactive: true, // Automatically skip pauses
@@ -207,7 +221,12 @@ export default function ReplayPlayer({ events, width = 850, height = 480, seekTi
         </div>
       )}
 
-      <div className="flex justify-center items-center bg-slate-950 rounded-2xl overflow-hidden p-2 shadow-2xl">
+      <div className={`flex justify-center items-center bg-slate-950 overflow-hidden shadow-2xl transition-all relative ${
+        detectedMobile ? 'rounded-[32px] border-[5px] border-slate-700/80 p-1.5 ring-1 ring-slate-600/30' : 'rounded-2xl p-2'
+      }`}>
+        {detectedMobile && (
+          <div className="absolute top-2 w-16 h-1 rounded-full bg-slate-600/70 z-10 pointer-events-none" />
+        )}
         <div ref={containerRef} className="rrweb-wrapper" />
       </div>
     </div>

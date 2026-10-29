@@ -371,6 +371,14 @@
     return path.join(' > ');
   }
 
+  function detectDeviceType(ua, width) {
+    var isTablet = /(ipad|tablet|(android(?!.*mobile))|(windows(?!.*phone)(.*touch))|kindle|playbook|silk)/i.test(ua);
+    var isMobile = /(mobi|ipod|iphone|phone|blackberry|opera mini|fennec|minimo|symbian)/i.test(ua) || (ua.indexOf('Android') > -1 && !isTablet);
+    if (isTablet || (width >= 600 && width < 1024)) return 'tablet';
+    if (isMobile || width < 600) return 'mobile';
+    return 'desktop';
+  }
+
   function getClientMeta() {
     var ua = navigator.userAgent || '';
     var browser = 'Other';
@@ -385,6 +393,10 @@
     else if (ua.indexOf('Android') > -1) os = 'Android';
     else if (ua.indexOf('iPhone') > -1 || ua.indexOf('iPad') > -1) os = 'iOS';
     else if (ua.indexOf('Linux') > -1) os = 'Linux';
+
+    var width = window.innerWidth || (window.screen ? window.screen.width : 1024);
+    var height = window.innerHeight || (window.screen ? window.screen.height : 768);
+    var devType = detectDeviceType(ua, width);
 
     // Deep Referrer & Traffic Channel Intelligence
     var ref = document.referrer || '';
@@ -430,7 +442,10 @@
     return {
       browser: browser,
       os: os,
-      screen: window.innerWidth + 'x' + window.innerHeight,
+      device: devType,
+      viewport_w: width,
+      viewport_h: height,
+      screen: width + 'x' + height,
       title: document.title || '',
       lang: navigator.language || 'en',
       referrer: ref,
@@ -529,6 +544,8 @@
       if (e.target && e.target.closest && e.target.closest('#te-feedback-root')) return;
       var x = Math.round((e.pageX / Math.max(window.innerWidth, 1)) * 100);
       var y = Math.round((e.pageY / Math.max(document.documentElement.scrollHeight, window.innerHeight, 1)) * 100);
+      var winW = window.innerWidth || (window.screen ? window.screen.width : 1024);
+      var winH = window.innerHeight || (window.screen ? window.screen.height : 768);
       var targetTag = e.target ? (e.target.tagName || '').toLowerCase() : '';
       var targetText = e.target && e.target.innerText ? e.target.innerText.trim().substring(0, 40) : (e.target && e.target.getAttribute ? (e.target.getAttribute('aria-label') || e.target.getAttribute('title') || '') : '');
       var exactSelector = getExactSelector(e.target);
@@ -536,6 +553,9 @@
       track('click', {
         x: x,
         y: y,
+        viewport_w: winW,
+        viewport_h: winH,
+        device: detectDeviceType(navigator.userAgent || '', winW),
         tag: targetTag,
         text: targetText,
         selector: exactSelector,

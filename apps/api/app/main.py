@@ -460,10 +460,49 @@ def get_user_project_ids(db: Session, user: models.User) -> List[int]:
     projects = get_user_projects(db, user)
     return [p.id for p in projects]
 
+def resolve_device_type(props: Optional[dict]) -> str:
+    """
+    Intelligently resolves device category ('mobile', 'tablet', 'desktop')
+    from multi-stage metadata: explicit device key -> OS name -> screen dimensions -> viewport width.
+    """
+    if not props or not isinstance(props, dict):
+        return 'desktop'
+    dev = (str(props.get('device') or '')).strip().lower()
+    if dev in ('mobile', 'tablet', 'desktop'):
+        return dev
+    os_name = (str(props.get('os') or '')).strip().lower()
+    if 'android' in os_name or 'iphone' in os_name or 'ios' in os_name or 'mobile' in os_name:
+        return 'mobile'
+    if 'ipad' in os_name or 'tablet' in os_name:
+        return 'tablet'
+    screen = str(props.get('screen') or '')
+    w = 0
+    if 'x' in screen:
+        try:
+            w = int(screen.split('x')[0])
+        except Exception:
+            w = 0
+    if not w and 'viewport_w' in props:
+        try:
+            w = int(props.get('viewport_w'))
+        except Exception:
+            w = 0
+    if w > 0:
+        if w < 600:
+            return 'mobile'
+        elif w < 1024:
+            return 'tablet'
+        else:
+            return 'desktop'
+    if os_name in ('windows', 'macos', 'linux'):
+        return 'desktop'
+    return 'mobile'
+
 def update_live_visitor_presence(db: Session, project_id: int, session_id: str, url: str = None, referrer: str = None, properties: dict = None):
     try:
         props = properties or {}
         now = datetime.utcnow()
+        dev_type = resolve_device_type(props).capitalize()
         visitor = db.query(models.LiveVisitor).filter(
             models.LiveVisitor.project_id == project_id,
             models.LiveVisitor.session_id == session_id
@@ -474,7 +513,7 @@ def update_live_visitor_presence(db: Session, project_id: int, session_id: str, 
             if referrer: visitor.referrer = referrer
             if props.get('browser'): visitor.browser = props.get('browser')
             if props.get('os'): visitor.os = props.get('os')
-            if props.get('device'): visitor.device = props.get('device')
+            visitor.device = props.get('device') or dev_type
             if props.get('country'): visitor.country = props.get('country')
         else:
             visitor = models.LiveVisitor(
@@ -483,8 +522,8 @@ def update_live_visitor_presence(db: Session, project_id: int, session_id: str, 
                 current_url=url or "/",
                 referrer=referrer or "Direct",
                 browser=props.get('browser', 'Chrome'),
-                os=props.get('os', 'Windows'),
-                device=props.get('device', 'Desktop'),
+                os=props.get('os', 'Android' if dev_type == 'Mobile' else 'Windows'),
+                device=props.get('device') or dev_type,
                 country=props.get('country', 'Global'),
                 last_ping=now,
                 created_at=now
@@ -697,7 +736,21 @@ def create_or_append_recording(payload: RecordingPayload, request: Request, db: 
             if not discovered_url:
                 discovered_url = f"https://{project.domain}/" if (project and project.domain) else f"https://session-{session_id}.local/"
 
-            base_meta = payload.meta or {"browser": "Chrome", "os": "Windows", "screen": f"{vp_width}x{vp_height}"}
+            if payload.meta and isinstance(payload.meta, dict):
+                base_meta = dict(payload.meta)
+                if not base_meta.get("device"):
+                    base_meta["device"] = resolve_device_type(base_meta)
+            else:
+                default_dev = "mobile" if vp_width < 600 else ("tablet" if vp_width < 1024 else "desktop")
+                default_os = "Android" if default_dev == "mobile" else "Windows"
+                base_meta = {
+                    "browser": "Chrome",
+                    "os": default_os,
+                    "device": default_dev,
+                    "screen": f"{vp_width}x{vp_height}",
+                    "viewport_w": vp_width,
+                    "viewport_h": vp_height
+                }
 
             # Ensure at least one pageview exists for this session + URL (only check on new recording or URL change)
             if not existing_rec:
@@ -731,7 +784,16 @@ def create_or_append_recording(payload: RecordingPayload, request: Request, db: 
                                 url=discovered_url,
                                 referrer=payload.referrer or "",
                                 session_id=session_id,
-                                properties={**base_meta, "x": pct_x, "y": pct_y, "tag": "element", "text": "Interactive Click"}
+                                properties={
+                                    **base_meta,
+                                    "x": pct_x,
+                                    "y": pct_y,
+                                    "viewport_w": vp_width,
+                                    "viewport_h": vp_height,
+                                    "device": resolve_device_type(base_meta),
+                                    "tag": "element",
+                                    "text": "Interactive Click"
+                                }
                             ))
             db.commit()
         except Exception:
@@ -905,6 +967,9 @@ def list_recordings(
             if not iso_created.endswith('Z'):
                 iso_created += 'Z'
 
+        detected_dev = resolve_device_type(client_meta)
+        default_os = "Android" if detected_dev == "mobile" else "Windows"
+        default_screen = "384x729" if detected_dev == "mobile" else "1920x1080"
         results.append({
             "id": r.id,
             "session_id": r.session_id,
@@ -914,8 +979,9 @@ def list_recordings(
             "created_at": iso_created,
             "entry_url": entry_url,
             "browser": client_meta.get("browser", "Chrome"),
-            "os": client_meta.get("os", "Windows"),
-            "screen": client_meta.get("screen", "1920x1080"),
+            "os": client_meta.get("os", default_os),
+            "device": detected_dev,
+            "screen": client_meta.get("screen", default_screen),
             "user_id": getattr(r, "user_id", None) or client_meta.get("user_id"),
             "user_email": getattr(r, "user_email", None) or client_meta.get("user_email"),
             "user_name": getattr(r, "user_name", None) or client_meta.get("user_name"),
@@ -3059,10 +3125,10 @@ def get_click_heatmap(project_id: Optional[int] = None, db: Session = Depends(ge
         if 'x' in props and 'y' in props:
             tag = props.get('tag', '')
             text = props.get('text', '')
-            vp_w = props.get('viewport_w', 1200)
-            if vp_w < 600:
+            dev_type = resolve_device_type(props)
+            if dev_type == 'mobile':
                 mobile_count += 1
-            elif vp_w < 1024:
+            elif dev_type == 'tablet':
                 tablet_count += 1
             else:
                 desktop_count += 1
@@ -3073,7 +3139,8 @@ def get_click_heatmap(project_id: Optional[int] = None, db: Session = Depends(ge
                 "url": e.url,
                 "session_id": e.session_id,
                 "tag": tag,
-                "text": text
+                "text": text,
+                "device": dev_type
             })
 
     total_clicks = len(heatmaps)

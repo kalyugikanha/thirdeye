@@ -20,6 +20,9 @@ import {
   ArrowLeft,
   RotateCcw,
   Monitor,
+  Smartphone,
+  Tablet,
+  Laptop,
   Globe,
   ShieldCheck,
   CheckCircle2,
@@ -56,12 +59,48 @@ interface SessionRecording {
   entry_url?: string;
   browser?: string;
   os?: string;
+  device?: string;
   screen?: string;
   user_id?: string | null;
   user_email?: string | null;
   user_name?: string | null;
   user_role?: string | null;
   event_count?: number;
+}
+
+function getDeviceBadge(rec: SessionRecording) {
+  const os = (rec.os || '').toLowerCase();
+  const dev = (rec.device || '').toLowerCase();
+  const screen = rec.screen || '';
+  let width = 0;
+  if (screen.includes('x')) {
+    width = parseInt(screen.split('x')[0], 10) || 0;
+  }
+  const isMobile = dev === 'mobile' || os.includes('android') || os.includes('iphone') || os.includes('ios') || (width > 0 && width < 600);
+  const isTablet = dev === 'tablet' || os.includes('ipad') || (width >= 600 && width < 1024);
+
+  if (isMobile) {
+    return {
+      type: 'mobile',
+      label: 'Mobile',
+      color: 'text-emerald-700 bg-emerald-50 border-emerald-200/60',
+      icon: <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
+    };
+  }
+  if (isTablet) {
+    return {
+      type: 'tablet',
+      label: 'Tablet',
+      color: 'text-purple-700 bg-purple-50 border-purple-200/60',
+      icon: <Tablet className="w-3.5 h-3.5 text-purple-600" />
+    };
+  }
+  return {
+    type: 'desktop',
+    label: 'Desktop',
+    color: 'text-blue-700 bg-blue-50 border-blue-200/60',
+    icon: <Laptop className="w-3.5 h-3.5 text-blue-600" />
+  };
 }
 
 export default function SessionsPage() {
@@ -531,74 +570,86 @@ export default function SessionsPage() {
                   />
                 )}
 
-                {recordings.map((rec) => (
-                  <div
-                    key={rec.id}
-                    className="p-5 rounded-3xl bg-white border border-slate-200/60 shadow-sm hover:shadow-md transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 group"
-                  >
-                    <div className="flex items-start sm:items-center gap-4">
-                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#ffe4d6] to-[#ffdcd2] text-rose-600 flex items-center justify-center flex-shrink-0 font-bold shadow-sm">
-                        <Video className="w-5 h-5" />
-                      </div>
-                      
-                      <div className="space-y-1.5">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-sm font-black text-slate-900 font-mono tracking-tight">
-                            {rec.session_id}
-                          </span>
-                          {(rec.user_email || rec.user_id) && (
-                            <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 px-2.5 py-0.5 rounded-full">
-                              👤 {rec.user_name || rec.user_email || rec.user_id} {rec.user_role ? `• ${rec.user_role}` : ''}
-                            </span>
-                          )}
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-full flex items-center gap-1">
-                            <ShieldCheck className="w-3 h-3 text-emerald-600" />
-                            Client CSS Inlined & Masked
-                          </span>
-                          <span className="text-[11px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-lg">
-                            {formatRelativeTime(rec.created_at)}
-                          </span>
-                        </div>
-
-                        {rec.entry_url && (
-                          <div className="flex items-center gap-1.5 text-xs text-slate-600 font-medium">
-                            <Globe className="w-3.5 h-3.5 text-slate-400" />
-                            <span className="truncate max-w-md font-mono text-[11px] text-slate-500">{rec.entry_url}</span>
-                          </div>
-                        )}
-
-                        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 pt-0.5">
-                          <span className="flex items-center gap-1 text-slate-600 font-medium">
-                            <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                            {formatExactTime(rec.created_at)}
-                          </span>
-                          <span>&bull;</span>
-                          <span className="flex items-center gap-1 text-slate-600">
-                            <Monitor className="w-3.5 h-3.5 text-slate-400" />
-                            {rec.browser || 'Chrome'} on {rec.os || 'Windows'}
-                          </span>
-                          <span>&bull;</span>
-                          <span className="flex items-center gap-1 text-slate-600">
-                            <Clock className="w-3.5 h-3.5 text-slate-400" />
-                            {formatDuration(rec.duration)}
-                          </span>
-                          <span>&bull;</span>
-                          <span className="text-slate-400 font-semibold">
-                            {rec.event_count || 1} rrweb events
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => handleWatchReplay(rec)}
-                      className="flex items-center justify-center gap-2 px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl text-xs font-bold shadow-sm transition-all hover:scale-105 self-start sm:self-center flex-shrink-0"
+                {recordings.map((rec) => {
+                  const devBadge = getDeviceBadge(rec);
+                  return (
+                    <div
+                      key={rec.id}
+                      className="p-5 rounded-3xl bg-white border border-slate-200/60 shadow-sm hover:shadow-md transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 group"
                     >
-                      <Play className="w-3.5 h-3.5 fill-white" />
-                      Watch Replay
-                    </button>
-                  </div>
-                ))}
+                      <div className="flex items-start sm:items-center gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#ffe4d6] to-[#ffdcd2] text-rose-600 flex items-center justify-center flex-shrink-0 font-bold shadow-sm">
+                          <Video className="w-5 h-5" />
+                        </div>
+                        
+                        <div className="space-y-1.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-black text-slate-900 font-mono tracking-tight">
+                              {rec.session_id}
+                            </span>
+                            {(rec.user_email || rec.user_id) && (
+                              <span className="text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 px-2.5 py-0.5 rounded-full">
+                                👤 {rec.user_name || rec.user_email || rec.user_id} {rec.user_role ? `• ${rec.user_role}` : ''}
+                              </span>
+                            )}
+                            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border flex items-center gap-1 ${devBadge.color}`}>
+                              {devBadge.icon}
+                              <span>{devBadge.label}</span>
+                            </span>
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                              Client CSS Inlined & Masked
+                            </span>
+                            <span className="text-[11px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-lg">
+                              {formatRelativeTime(rec.created_at)}
+                            </span>
+                          </div>
+
+                          {rec.entry_url && (
+                            <div className="flex items-center gap-1.5 text-xs text-slate-600 font-medium">
+                              <Globe className="w-3.5 h-3.5 text-slate-400" />
+                              <span className="truncate max-w-md font-mono text-[11px] text-slate-500">{rec.entry_url}</span>
+                            </div>
+                          )}
+
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 pt-0.5">
+                            <span className="flex items-center gap-1 text-slate-600 font-medium">
+                              <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                              {formatExactTime(rec.created_at)}
+                            </span>
+                            <span>&bull;</span>
+                            <span className="flex items-center gap-1.5 text-slate-700 font-medium">
+                              {devBadge.icon}
+                              <span>{rec.browser || 'Chrome'} on {rec.os || (devBadge.type === 'mobile' ? 'Android' : 'Windows')}</span>
+                              {rec.screen && (
+                                <span className="font-mono text-[11px] text-slate-500">
+                                  ({rec.screen})
+                                </span>
+                              )}
+                            </span>
+                            <span>&bull;</span>
+                            <span className="flex items-center gap-1 text-slate-600">
+                              <Clock className="w-3.5 h-3.5 text-slate-400" />
+                              {formatDuration(rec.duration)}
+                            </span>
+                            <span>&bull;</span>
+                            <span className="text-slate-400 font-semibold">
+                              {rec.event_count || 1} rrweb events
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => handleWatchReplay(rec)}
+                        className="flex items-center justify-center gap-2 px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl text-xs font-bold shadow-sm transition-all hover:scale-105 self-start sm:self-center flex-shrink-0 cursor-pointer"
+                      >
+                        <Play className="w-3.5 h-3.5 fill-white" />
+                        Watch Replay
+                      </button>
+                    </div>
+                  );
+                })}
 
                 {totalPages > 1 && (
                   <div className="pt-2">
@@ -652,6 +703,16 @@ export default function SessionsPage() {
                     <span>{formatExactTime(activeSession.created_at)}</span>
                     <span>&bull;</span>
                     <span>Duration: {formatDuration(activeSession.duration)}</span>
+                    <span>&bull;</span>
+                    {(() => {
+                      const activeBadge = getDeviceBadge(activeSession);
+                      return (
+                        <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${activeBadge.color}`}>
+                          {activeBadge.icon}
+                          <span>{activeSession.browser || 'Chrome'} on {activeSession.os || (activeBadge.type === 'mobile' ? 'Android' : 'Windows')} ({activeBadge.label}{activeSession.screen ? ` • ${activeSession.screen}` : ''})</span>
+                        </span>
+                      );
+                    })()}
                     {activeSession.entry_url && (
                       <>
                         <span>&bull;</span>
@@ -720,7 +781,14 @@ export default function SessionsPage() {
                     </button>
                   </div>
                 ) : replayEvents ? (
-                  <ReplayPlayer events={replayEvents} width={680} height={450} seekTime={seekTime} siteUrl={activeSession?.entry_url || clientDomain} />
+                  <ReplayPlayer 
+                    events={replayEvents} 
+                    width={getDeviceBadge(activeSession).type === 'mobile' ? 360 : 680} 
+                    height={getDeviceBadge(activeSession).type === 'mobile' ? 520 : 450} 
+                    isMobile={getDeviceBadge(activeSession).type === 'mobile'}
+                    seekTime={seekTime} 
+                    siteUrl={activeSession?.entry_url || clientDomain} 
+                  />
                 ) : null}
               </div>
 
