@@ -235,6 +235,28 @@ export default function SessionsPage() {
     loadSessions();
   }, [loadSessions]);
 
+  // Auto-open session replay if session_id is in query parameters
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const sp = new URLSearchParams(window.location.search);
+      const sid = sp.get('session_id');
+      const urlParam = sp.get('url');
+      if (sid) {
+        setUserSearch(sid);
+        handleWatchReplay({
+          id: 0,
+          session_id: sid,
+          project_id: null,
+          duration: 0,
+          file_path: '',
+          created_at: new Date().toISOString()
+        });
+      } else if (urlParam) {
+        setUserSearch(urlParam);
+      }
+    }
+  }, []);
+
   const handleSimulate = async () => {
     setSimulating(true);
     try {

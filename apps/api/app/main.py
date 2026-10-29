@@ -3456,10 +3456,16 @@ class FunnelCreate(BaseModel):
 
 @app.post('/api/v1/funnels')
 def create_funnel(data: FunnelCreate, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    user_project_ids = get_user_project_ids(db, current_user)
+    if not is_superadmin_user(current_user) and data.project_id not in user_project_ids:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    clean_steps = [s.strip() for s in data.steps if s.strip()]
+    if not clean_steps:
+        raise HTTPException(status_code=400, detail="Funnel must have at least one step")
     funnel = models.Funnel(
         project_id=data.project_id,
-        name=data.name,
-        steps_json=data.steps
+        name=data.name.strip() or "Custom Funnel",
+        steps_json=clean_steps
     )
     db.add(funnel)
     db.commit()
@@ -3467,10 +3473,99 @@ def create_funnel(data: FunnelCreate, db: Session = Depends(get_db), current_use
     return {"id": funnel.id, "name": funnel.name, "steps": funnel.steps_json}
 
 @app.get('/api/v1/funnels')
-def list_funnels(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    project_ids = [p.id for p in db.query(models.Project).filter(models.Project.organization_id == current_user.organization_id).all()]
-    funnels = db.query(models.Funnel).filter(models.Funnel.project_id.in_(project_ids)).all() if project_ids else []
-    return [{"id": f.id, "name": f.name, "steps": f.steps_json, "created_at": f.created_at.isoformat()} for f in funnels]
+def list_funnels(project_id: Optional[int] = None, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    user_project_ids = get_user_project_ids(db, current_user)
+    if project_id is not None:
+        if not is_superadmin_user(current_user) and project_id not in user_project_ids:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        target_ids = [project_id]
+    else:
+        target_ids = user_project_ids
+
+    # Auto-seed master SelfUp funnel if project 2 is accessible and has no funnels
+    if 2 in target_ids:
+        existing_p2 = db.query(models.Funnel).filter(models.Funnel.project_id == 2).first()
+        if not existing_p2:
+            seed_funnel = models.Funnel(
+                project_id=2,
+                name="SelfUp Master Checkout Funnel",
+                steps_json=[
+                    "https://selfupcommunity.com/",
+                    "https://selfupcommunity.com/courses",
+                    "https://selfupcommunity.com/cart",
+                    "https://selfupcommunity.com/student/checkout"
+                ]
+            )
+            db.add(seed_funnel)
+            db.commit()
+
+    funnels = db.query(models.Funnel).filter(models.Funnel.project_id.in_(target_ids)).all() if target_ids else []
+    return [{"id": f.id, "project_id": f.project_id, "name": f.name, "steps": f.steps_json, "created_at": f.created_at.isoformat()} for f in funnels]
+
+@app.delete('/api/v1/funnels/{funnel_id}')
+def delete_funnel(funnel_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    funnel = db.query(models.Funnel).filter(models.Funnel.id == funnel_id).first()
+    if not funnel:
+        raise HTTPException(status_code=404, detail="Funnel not found")
+    user_project_ids = get_user_project_ids(db, current_user)
+    if not is_superadmin_user(current_user) and funnel.project_id not in user_project_ids:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    db.delete(funnel)
+    db.commit()
+    return {"status": "deleted", "id": funnel_id}
+
+@app.get('/api/v1/funnels/presets')
+def get_funnel_presets(project_id: Optional[int] = None, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    domain = "selfupcommunity.com"
+    if project_id:
+        p = db.query(models.Project).filter(models.Project.id == project_id).first()
+        if p and p.domain:
+            domain = p.domain
+
+    if "selfup" in domain.lower():
+        presets = [
+            {
+                "name": "SelfUp Master Checkout Funnel",
+                "description": "End-to-end journey from Landing Page to Student Course Checkout",
+                "steps": [
+                    "https://selfupcommunity.com/",
+                    "https://selfupcommunity.com/courses",
+                    "https://selfupcommunity.com/cart",
+                    "https://selfupcommunity.com/student/checkout"
+                ]
+            },
+            {
+                "name": "Course Catalog Discovery Flow",
+                "description": "Exploration of courses and category browsing",
+                "steps": [
+                    "https://selfupcommunity.com/",
+                    "https://selfupcommunity.com/courses",
+                    "https://selfupcommunity.com/courses?category=business"
+                ]
+            },
+            {
+                "name": "Membership & Pricing Conversion",
+                "description": "Direct pricing page navigation to student checkout",
+                "steps": [
+                    "https://selfupcommunity.com/",
+                    "https://selfupcommunity.com/pricing",
+                    "https://selfupcommunity.com/student/checkout"
+                ]
+            }
+        ]
+    else:
+        presets = [
+            {
+                "name": "Standard E-Commerce Funnel",
+                "description": "Landing page to cart and payment confirmation",
+                "steps": [
+                    f"https://{domain}/",
+                    f"https://{domain}/pricing",
+                    f"https://{domain}/checkout"
+                ]
+            }
+        ]
+    return {"domain": domain, "presets": presets}
 
 @app.get('/api/v1/funnels/{funnel_id}/analytics')
 def get_funnel_analytics(funnel_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
@@ -3482,40 +3577,133 @@ def get_funnel_analytics(funnel_id: int, db: Session = Depends(get_db), current_
         raise HTTPException(status_code=403, detail="Forbidden: funnel belongs to another tenant")
 
     steps = funnel.steps_json or []
+    if not steps:
+        return {"funnel_id": funnel.id, "name": funnel.name, "total_entrants": 0, "final_completions": 0, "overall_conversion_pct": 0, "steps": []}
+
+    # True sequential cohort processing: Step i cohort is subset of Step i-1
+    step_cohorts = []
+    current_cohort = None
+
+    for i, step_pattern in enumerate(steps):
+        clean_pat = step_pattern.strip()
+        q = db.query(models.Event.session_id).filter(
+            models.Event.project_id == funnel.project_id,
+            models.Event.url.like(f"%{clean_pat}%")
+        )
+        if current_cohort is not None:
+            if not current_cohort:
+                matching_sessions = set()
+            else:
+                step_sessions = set(r[0] for r in q.distinct().all())
+                matching_sessions = current_cohort.intersection(step_sessions)
+        else:
+            matching_sessions = set(r[0] for r in q.distinct().all())
+
+        step_cohorts.append(matching_sessions)
+        current_cohort = matching_sessions
+
+    total_entrants = len(step_cohorts[0]) if step_cohorts else 0
+    final_completions = len(step_cohorts[-1]) if step_cohorts else 0
     step_results = []
-    prev_count = None
 
     for i, step_url in enumerate(steps):
-        # Query distinct sessions visiting this step_url
-        matching_events = db.query(models.Event.session_id).filter(
-            models.Event.project_id == funnel.project_id,
-            models.Event.url.like(f"%{step_url}%")
-        ).distinct().all()
-        count = len(matching_events)
-        
-        # If mock database has zero, provide demo realistic progression numbers if testing
-        if count == 0 and i == 0:
-            count = 100
-        elif count == 0 and prev_count is not None:
-            count = int(prev_count * 0.65)
+        cohort_count = len(step_cohorts[i])
+        prev_count = len(step_cohorts[i-1]) if i > 0 else cohort_count
 
-        drop_off_pct = round((1 - (count / prev_count)) * 100, 1) if prev_count and prev_count > 0 else 0
-        conversion_pct = round((count / prev_count) * 100, 1) if prev_count and prev_count > 0 else 100.0
+        drop_off_pct = round((1 - (cohort_count / prev_count)) * 100, 1) if prev_count > 0 else 0
+        conversion_pct = round((cohort_count / prev_count) * 100, 1) if prev_count > 0 else 100.0
+        retention_from_start_pct = round((cohort_count / total_entrants) * 100, 1) if total_entrants > 0 else 0
+
+        drop_off_count = prev_count - cohort_count if i > 0 else 0
+        dropped_users_info = []
+        device_distribution = {"mobile": 0, "desktop": 0, "tablet": 0}
+
+        if i > 0 and drop_off_count > 0:
+            dropped_sids = list(step_cohorts[i-1] - step_cohorts[i])
+            sample_sids = dropped_sids[:25]
+
+            recs_by_sid = {
+                r.session_id: r for r in db.query(models.SessionRecording).filter(
+                    models.SessionRecording.session_id.in_(sample_sids)
+                ).all()
+            }
+
+            for sid in sample_sids:
+                rec = recs_by_sid.get(sid)
+                ev = db.query(models.Event).filter(
+                    models.Event.session_id == sid
+                ).order_by(models.Event.created_at.desc()).first()
+
+                props = (ev.properties or {}) if ev else {}
+                dev = (props.get('device') or 'mobile').capitalize()
+                if 'Desktop' in dev or 'Windows' in dev or 'Mac' in dev:
+                    dev_type = 'Desktop'
+                elif 'Tablet' in dev or 'Ipad' in dev:
+                    dev_type = 'Tablet'
+                else:
+                    dev_type = 'Mobile'
+
+                friction_tags = []
+                rage_count = db.query(models.Event).filter(
+                    models.Event.session_id == sid,
+                    models.Event.event_type == 'rage_click'
+                ).count()
+                if rage_count > 0:
+                    friction_tags.append(f"Rage Clicks ({rage_count}x)")
+
+                err_count = db.query(models.Event).filter(
+                    models.Event.session_id == sid,
+                    models.Event.event_type.in_(['code_error', 'layout_error'])
+                ).count()
+                if err_count > 0:
+                    friction_tags.append(f"Errors ({err_count}x)")
+
+                if rec and rec.duration and rec.duration > 180:
+                    mins = rec.duration // 60
+                    friction_tags.append(f"Hesitation ({mins}m on page)")
+
+                dropped_users_info.append({
+                    "session_id": sid,
+                    "duration": rec.duration if rec else 0,
+                    "has_replay": rec is not None,
+                    "device": dev_type,
+                    "os": props.get('os') or (rec.os if rec else 'Android'),
+                    "browser": props.get('browser') or (rec.browser if rec else 'Chrome'),
+                    "user_email": ev.user_email if ev else (rec.user_email if rec else None),
+                    "user_name": ev.user_name if ev else (rec.user_name if rec else None),
+                    "last_active": (ev.created_at.isoformat() + 'Z') if ev and ev.created_at else (rec.created_at.isoformat() + 'Z' if rec and rec.created_at else None),
+                    "friction_tags": friction_tags
+                })
+
+            mob_cnt = sum(1 for u in dropped_users_info if u['device'] == 'Mobile')
+            desk_cnt = sum(1 for u in dropped_users_info if u['device'] == 'Desktop')
+            tab_cnt = sum(1 for u in dropped_users_info if u['device'] == 'Tablet')
+            sample_tot = max(1, len(dropped_users_info))
+            device_distribution = {
+                "mobile": round((mob_cnt / sample_tot) * 100, 1),
+                "desktop": round((desk_cnt / sample_tot) * 100, 1),
+                "tablet": round((tab_cnt / sample_tot) * 100, 1)
+            }
 
         step_results.append({
             "step": i + 1,
             "url": step_url,
-            "visitors": count,
+            "visitors": cohort_count,
             "conversion_pct": conversion_pct,
-            "drop_off_pct": drop_off_pct
+            "drop_off_pct": drop_off_pct,
+            "drop_off_count": drop_off_count,
+            "retention_from_start_pct": retention_from_start_pct,
+            "device_distribution": device_distribution,
+            "dropped_users": dropped_users_info
         })
-        prev_count = count
 
-    overall_conversion = round((step_results[-1]["visitors"] / step_results[0]["visitors"]) * 100, 1) if step_results and step_results[0]["visitors"] > 0 else 0
+    overall_conversion = round((final_completions / total_entrants) * 100, 1) if total_entrants > 0 else 0
 
     return {
         "funnel_id": funnel.id,
         "name": funnel.name,
+        "total_entrants": total_entrants,
+        "final_completions": final_completions,
         "overall_conversion_pct": overall_conversion,
         "steps": step_results
     }
