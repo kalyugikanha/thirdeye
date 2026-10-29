@@ -526,3 +526,18 @@ class SecureEyeLoadTestRun(Base):
     details_json = Column(JSON, default=dict)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     project = relationship('Project')
+
+
+class DigestSubscription(Base):
+    __tablename__ = 'digest_subscriptions'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    recipients = Column(String, default='akash@colladome.com,shubham@colladome.com')
+    is_active = Column(Boolean, default=True)
+    delivery_day = Column(String, default='Monday')
+    delivery_time_ist = Column(String, default='09:00 AM')
+    last_sent_at = Column(DateTime, nullable=True)
+    last_status = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship('Project')

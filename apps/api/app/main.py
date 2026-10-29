@@ -47,6 +47,7 @@ def safe_migrate_sqlite_schema():
     phase2_internal.migrate_phase2_schema(engine)
     secureeye.migrate_secureeye_schema(engine)
     migration_sqls = [
+        "CREATE TABLE IF NOT EXISTS digest_subscriptions (id INTEGER PRIMARY KEY, project_id INTEGER, recipients TEXT, is_active BOOLEAN DEFAULT 1, delivery_day TEXT DEFAULT 'Monday', delivery_time_ist TEXT DEFAULT '09:00 AM', last_sent_at DATETIME, last_status TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)",
         "ALTER TABLE projects ADD COLUMN dns_verified BOOLEAN DEFAULT 0",
         "ALTER TABLE projects ADD COLUMN dns_token TEXT",
         "ALTER TABLE organizations ADD COLUMN plan TEXT DEFAULT 'Pro'",
@@ -241,6 +242,53 @@ def create_default_user():
 
     import threading
     threading.Thread(target=_bg_uptime_daemon, daemon=True).start()
+
+    def _bg_weekly_digest_daemon():
+        import time
+        time.sleep(45)
+        lock_file = BASE_DIR / '.digest_daemon.lock'
+        while True:
+            try:
+                now_utc = datetime.utcnow()
+                # Monday is weekday 0. 09:00 AM IST is 03:30 AM UTC
+                is_monday = now_utc.weekday() == 0
+                hour = now_utc.hour
+                minute = now_utc.minute
+                if is_monday and ((hour == 3 and minute >= 30) or hour == 4):
+                    now_ts = time.time()
+                    should_run = False
+                    if not lock_file.exists():
+                        should_run = True
+                    else:
+                        try:
+                            mtime = lock_file.stat().st_mtime
+                            if (now_ts - mtime) > 7200:
+                                should_run = True
+                        except Exception:
+                            should_run = True
+                    if should_run:
+                        lock_file.write_text(str(now_ts))
+                        from app import digest
+                        db_gen = get_db()
+                        db_inst = next(db_gen)
+                        try:
+                            subs = db_inst.query(models.DigestSubscription).filter(models.DigestSubscription.is_active == True).all()
+                            if not subs:
+                                subs = [models.DigestSubscription(project_id=2, recipients="akash@colladome.com,shubham@colladome.com", is_active=True)]
+                            for s in subs:
+                                recips = [e.strip() for e in s.recipients.split(',') if '@' in e]
+                                res = digest.send_executive_digest(s.project_id, recips, db_inst)
+                                s.last_sent_at = datetime.utcnow()
+                                s.last_status = res.get('status')
+                                db_inst.commit()
+                        finally:
+                            db_inst.close()
+            except Exception as e:
+                import logging
+                logging.getLogger('digest_daemon').warning(f"Digest daemon error: {e}")
+            time.sleep(600)
+
+    threading.Thread(target=_bg_weekly_digest_daemon, daemon=True).start()
     db = next(get_db())
     org = db.query(models.Organization).filter(models.Organization.name == 'ThirdEye Admin').first()
     if not org:
@@ -5159,6 +5207,91 @@ def export_analytics_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+
+# ===================== WEEKLY MONDAY MORNING EXECUTIVE DIGEST ENGINE =====================
+class DigestSendRequest(BaseModel):
+    project_id: int = 2
+    recipient_email: Optional[str] = None
+
+class DigestConfigUpdate(BaseModel):
+    project_id: int = 2
+    is_active: bool = True
+    recipients: str = 'akash@colladome.com,shubham@colladome.com'
+    delivery_day: str = 'Monday'
+    delivery_time_ist: str = '09:00 AM'
+
+@app.get('/api/v1/digest/preview', response_class=HTMLResponse)
+def preview_executive_digest(
+    project_id: int = 2,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    from app import digest
+    data = digest.generate_weekly_digest_data(project_id, db)
+    html = digest.render_executive_digest_html(data)
+    return HTMLResponse(content=html)
+
+@app.post('/api/v1/digest/send-test')
+def send_test_digest(
+    data: DigestSendRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    from app import digest
+    recipients = [e.strip() for e in (data.recipient_email or 'akash@colladome.com,shubham@colladome.com').split(',') if '@' in e]
+    res = digest.send_executive_digest(data.project_id, recipients, db)
+    sub = db.query(models.DigestSubscription).filter(models.DigestSubscription.project_id == data.project_id).first()
+    if sub:
+        sub.last_sent_at = datetime.utcnow()
+        sub.last_status = res.get('status')
+        db.commit()
+    return res
+
+@app.get('/api/v1/digest/config')
+def get_digest_config(
+    project_id: int = 2,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    sub = db.query(models.DigestSubscription).filter(models.DigestSubscription.project_id == project_id).first()
+    if not sub:
+        sub = models.DigestSubscription(
+            project_id=project_id,
+            recipients='akash@colladome.com,shubham@colladome.com',
+            is_active=True,
+            delivery_day='Monday',
+            delivery_time_ist='09:00 AM'
+        )
+        db.add(sub)
+        db.commit()
+        db.refresh(sub)
+    return {
+        "project_id": sub.project_id,
+        "is_active": sub.is_active,
+        "recipients": sub.recipients,
+        "delivery_day": sub.delivery_day,
+        "delivery_time_ist": sub.delivery_time_ist,
+        "last_sent_at": sub.last_sent_at.isoformat() + 'Z' if sub.last_sent_at else None,
+        "last_status": sub.last_status
+    }
+
+@app.post('/api/v1/digest/config')
+def update_digest_config(
+    data: DigestConfigUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    sub = db.query(models.DigestSubscription).filter(models.DigestSubscription.project_id == data.project_id).first()
+    if not sub:
+        sub = models.DigestSubscription(project_id=data.project_id)
+        db.add(sub)
+    sub.is_active = data.is_active
+    sub.recipients = data.recipients.strip()
+    sub.delivery_day = data.delivery_day
+    sub.delivery_time_ist = data.delivery_time_ist
+    db.commit()
+    return {"status": "saved", "config": data.dict()}
 
 
 # ===================== THIRDEYE COMMERCIAL: BILLING & USAGE HUB =====================
