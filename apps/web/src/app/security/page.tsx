@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import PaginationControls from '@/components/PaginationControls';
+import PortalNewsBanner from '@/components/PortalNewsBanner';
 import { apiUrl } from '@/lib/api';
 import {
   ShieldAlert,
@@ -27,7 +28,13 @@ import {
   Eye,
   Cpu,
   FileCode2,
-  Activity
+  Activity,
+  FileText,
+  Download,
+  ExternalLink,
+  Shield,
+  KeyRound,
+  ChevronDown
 } from 'lucide-react';
 
 export default function SecureEyeMasterPage() {
@@ -42,6 +49,20 @@ export default function SecureEyeMasterPage() {
   const [scanMode, setScanMode] = useState<'passive' | 'safe_active' | 'deep_authorized'>('safe_active');
   const [scanning, setScanning] = useState(false);
   const [inspectingLocal, setInspectingLocal] = useState(false);
+
+  // Ownership verification modal & state
+  const [showVerifyModal, setShowVerifyModal] = useState(false);
+  const [verifyTokenData, setVerifyTokenData] = useState<any>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyMethod, setVerifyMethod] = useState<'auto' | 'dns_txt' | 'token_file' | 'telemetry'>('auto');
+  const [verifyResult, setVerifyResult] = useState<any>(null);
+
+  // Retest state
+  const [retestingId, setRetestingId] = useState<number | null>(null);
+  const [retestFeedback, setRetestFeedback] = useState<{ [id: number]: { status: string; message: string } }>({});
+
+  // Report export dropdown
+  const [showReportDropdown, setShowReportDropdown] = useState(false);
 
   // Findings filters & pagination
   const [sevFilter, setSevFilter] = useState<string>('ALL');
@@ -150,6 +171,91 @@ export default function SecureEyeMasterPage() {
     } finally {
       setInspectingLocal(false);
     }
+  };
+
+  const handleOpenVerifyModal = async () => {
+    setShowVerifyModal(true);
+    setVerifyResult(null);
+    const token = localStorage.getItem('te_token');
+    const pid = localStorage.getItem('te_active_project_id') || '';
+    const q = pid ? `?project_id=${pid}` : '';
+    try {
+      const res = await fetch(apiUrl(`/api/v1/secureeye/verification-token${q}`), {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setVerifyTokenData(await res.json());
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleVerifyOwnership = async () => {
+    setVerifying(true);
+    setVerifyResult(null);
+    const token = localStorage.getItem('te_token');
+    const pid = Number(localStorage.getItem('te_active_project_id') || 0) || undefined;
+    try {
+      const res = await fetch(apiUrl('/api/v1/secureeye/verify-ownership'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          project_id: pid,
+          method: verifyMethod
+        })
+      });
+      const data = await res.json();
+      setVerifyResult(data);
+      if (data.verified) {
+        await fetchAll();
+      }
+    } catch (e) {
+      setVerifyResult({ verified: false, message: 'Network or server error during verification.' });
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleRetestFinding = async (findingId: number) => {
+    setRetestingId(findingId);
+    const token = localStorage.getItem('te_token');
+    try {
+      const res = await fetch(apiUrl(`/api/v1/secureeye/findings/${findingId}/retest`), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      setRetestFeedback(prev => ({
+        ...prev,
+        [findingId]: { status: data.status, message: data.message }
+      }));
+      await fetchAll();
+    } catch (e) {
+      setRetestFeedback(prev => ({
+        ...prev,
+        [findingId]: { status: 'error', message: 'Failed to contact retest server.' }
+      }));
+    } finally {
+      setRetestingId(null);
+    }
+  };
+
+  const handleOpenPrintReport = () => {
+    setShowReportDropdown(false);
+    const pid = localStorage.getItem('te_active_project_id') || '';
+    const q = pid ? `?project_id=${pid}` : '';
+    window.open(apiUrl(`/api/v1/secureeye/report/html${q}`), '_blank');
+  };
+
+  const handleDownloadCSV = () => {
+    setShowReportDropdown(false);
+    const pid = localStorage.getItem('te_active_project_id') || '';
+    const q = pid ? `?project_id=${pid}` : '';
+    window.location.href = apiUrl(`/api/v1/secureeye/report/csv${q}`);
   };
 
   const handleUpdateFinding = async (findingId: number, status: string) => {
@@ -304,8 +410,11 @@ export default function SecureEyeMasterPage() {
     <div className="flex min-h-screen bg-slate-50 text-slate-900 font-sans">
       <Sidebar />
 
-      <main className="flex-1 flex flex-col pt-6 px-6 lg:px-10 overflow-y-auto">
-        <div className="w-full max-w-7xl mx-auto flex flex-col gap-6 pb-16">
+      <main className="flex-1 flex flex-col overflow-y-auto">
+        {/* In-Portal Critical Security & Quota Broadcast Banner */}
+        <PortalNewsBanner />
+
+        <div className="w-full max-w-7xl mx-auto flex flex-col gap-6 pt-6 px-6 lg:px-10 pb-16">
           
           {/* Top Enterprise Header */}
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5 bg-white border border-slate-200/90 rounded-3xl p-6 shadow-xs">
@@ -331,13 +440,22 @@ export default function SecureEyeMasterPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              <div className="px-3.5 py-2.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-xs">
-                <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Asset Guardrail</span>
-                <span className="font-extrabold text-slate-800 flex items-center gap-1.5 mt-0.5 font-mono">
+              {/* Asset Guardrail & Verification Trigger */}
+              <button
+                type="button"
+                onClick={handleOpenVerifyModal}
+                className="px-3.5 py-2.5 rounded-2xl bg-slate-50 hover:bg-slate-100 border border-slate-200/80 text-left transition-all cursor-pointer group"
+                title="Click to view DNS TXT / Token File verification details"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Asset Guardrail</span>
+                  <span className="text-[10px] font-extrabold text-indigo-600 opacity-80 group-hover:opacity-100">Verify ⚙</span>
+                </div>
+                <span className="font-extrabold text-slate-800 flex items-center gap-1.5 mt-0.5 font-mono text-xs">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
                   {overview?.project?.domain || 'Verified Workspace'}
                 </span>
-              </div>
+              </button>
 
               <div className="px-4 py-2.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-center min-w-[110px]">
                 <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Security Score</span>
@@ -347,6 +465,51 @@ export default function SecureEyeMasterPage() {
               <div className="px-4 py-2.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-center min-w-[120px]">
                 <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Launch Readiness</span>
                 <span className="text-lg font-black text-indigo-600">{summary.launch_readiness_pct}% <span className="text-xs font-bold text-slate-500">({summary.launch_passed}/{summary.launch_total})</span></span>
+              </div>
+
+              {/* Executive Report Export Button & Dropdown */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowReportDropdown(!showReportDropdown)}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-2 shadow-xs transition-all cursor-pointer"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>Executive Report</span>
+                  <ChevronDown className="w-3.5 h-3.5 opacity-80" />
+                </button>
+
+                {showReportDropdown && (
+                  <div className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-2xl shadow-xl z-50 p-2 space-y-1">
+                    <button
+                      type="button"
+                      onClick={handleOpenPrintReport}
+                      className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-50 flex items-center gap-2.5 text-xs font-bold text-slate-800 cursor-pointer transition-colors"
+                    >
+                      <div className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600">
+                        <FileText className="w-3.5 h-3.5" />
+                      </div>
+                      <div>
+                        <div className="text-slate-900 font-extrabold">Print / PDF Executive Report</div>
+                        <div className="text-[10px] text-slate-500 font-medium">Full CIA Triad & QA Audit Sign-off</div>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleDownloadCSV}
+                      className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-50 flex items-center gap-2.5 text-xs font-bold text-slate-800 cursor-pointer transition-colors"
+                    >
+                      <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600">
+                        <Download className="w-3.5 h-3.5" />
+                      </div>
+                      <div>
+                        <div className="text-slate-900 font-extrabold">Export Findings CSV</div>
+                        <div className="text-[10px] text-slate-500 font-medium">10-field structured spreadsheet</div>
+                      </div>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -694,7 +857,7 @@ export default function SecureEyeMasterPage() {
                           <h3 className="text-base font-extrabold text-slate-900">{f.title}</h3>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2">
                           <span className={`text-[10px] font-extrabold uppercase px-2.5 py-1 rounded-xl ${
                             f.status === 'fixed'
                               ? 'bg-emerald-100 text-emerald-800'
@@ -704,10 +867,22 @@ export default function SecureEyeMasterPage() {
                           }`}>
                             Status: {f.status}
                           </span>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRetestFinding(f.id)}
+                            disabled={retestingId === f.id}
+                            className="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                            title="Retest this specific vulnerability live on the server"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${retestingId === f.id ? 'animate-spin text-indigo-600' : ''}`} />
+                            <span>{retestingId === f.id ? 'Retesting...' : 'Retest Live'}</span>
+                          </button>
+
                           {f.status !== 'fixed' && (
                             <button
                               onClick={() => handleUpdateFinding(f.id, 'fixed')}
-                              className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold"
+                              className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer"
                             >
                               Mark Fixed
                             </button>
@@ -715,7 +890,7 @@ export default function SecureEyeMasterPage() {
                           {f.status === 'open' && (
                             <button
                               onClick={() => handleUpdateFinding(f.id, 'accepted')}
-                              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+                              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all cursor-pointer"
                             >
                               Accept Risk
                             </button>
@@ -723,13 +898,28 @@ export default function SecureEyeMasterPage() {
                           {f.status !== 'open' && (
                             <button
                               onClick={() => handleUpdateFinding(f.id, 'open')}
-                              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+                              className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all cursor-pointer"
                             >
                               Re-Open
                             </button>
                           )}
                         </div>
                       </div>
+
+                      {retestFeedback[f.id] && (
+                        <div className={`p-3 rounded-2xl text-xs flex items-center gap-2 border font-bold ${
+                          retestFeedback[f.id].status === 'fixed'
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                            : 'bg-rose-50 text-rose-800 border-rose-200'
+                        }`}>
+                          {retestFeedback[f.id].status === 'fixed' ? (
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                          ) : (
+                            <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                          )}
+                          <span>{retestFeedback[f.id].message}</span>
+                        </div>
+                      )}
 
                       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 text-xs">
                         <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/60 space-y-1">
@@ -1163,6 +1353,164 @@ export default function SecureEyeMasterPage() {
           )}
 
         </div>
+
+        {/* Ownership Verification Modal */}
+        {showVerifyModal && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-xl w-full p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-extrabold text-slate-900">Domain Ownership Verification</h3>
+                    <p className="text-xs text-slate-500">SecureEye Section 0: Verify ownership prior to Deep Authorized scans</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowVerifyModal(false)}
+                  className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Verification Methods Tabs */}
+              <div className="grid grid-cols-3 gap-2 p-1 bg-slate-100 rounded-2xl text-xs font-bold">
+                {[
+                  { id: 'auto', label: '1. Auto / Telemetry' },
+                  { id: 'dns_txt', label: '2. DNS TXT' },
+                  { id: 'token_file', label: '3. Token File' },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setVerifyMethod(m.id as any)}
+                    className={`py-2 px-2.5 rounded-xl transition-all cursor-pointer ${
+                      verifyMethod === m.id ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Instruction Details based on method */}
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 text-xs space-y-3">
+                {verifyMethod === 'auto' && (
+                  <div className="space-y-2">
+                    <div className="font-extrabold text-slate-900 flex items-center gap-1.5">
+                      <Activity className="w-4 h-4 text-emerald-600" />
+                      Active Telemetry Pass-Through
+                    </div>
+                    <p className="text-slate-600">
+                      If the ThirdEye tracking script (<code className="font-mono font-bold text-slate-800">te.js</code>) is already embedded and collecting live visitor sessions or events on <code className="font-mono font-bold text-indigo-700">{overview?.project?.domain || 'this domain'}</code>, ownership is confirmed automatically.
+                    </p>
+                  </div>
+                )}
+
+                {verifyMethod === 'dns_txt' && (
+                  <div className="space-y-2.5">
+                    <div className="font-extrabold text-slate-900 flex items-center gap-1.5">
+                      <Globe2 className="w-4 h-4 text-indigo-600" />
+                      DNS TXT Record Configuration
+                    </div>
+                    <p className="text-slate-600">
+                      Add the following TXT record to your DNS zone provider (Cloudflare, GoDaddy, Hostinger, etc.):
+                    </p>
+                    <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-1.5 font-mono text-[11px]">
+                      <div className="flex justify-between items-center text-slate-500 text-[10px] font-sans font-bold uppercase">
+                        <span>DNS Host: <code>@</code></span>
+                        <span>Type: <code>TXT</code></span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 pt-1">
+                        <code className="text-indigo-600 font-bold break-all">
+                          {verifyTokenData?.dns_txt?.txt_value || `thirdeye-verification=${overview?.project?.verification_token || 'thirdeye-verify-token'}`}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => copyCode('txt_val', verifyTokenData?.dns_txt?.txt_value || `thirdeye-verification=${overview?.project?.verification_token}`)}
+                          className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center gap-1 flex-shrink-0 cursor-pointer"
+                        >
+                          {copiedKey === 'txt_val' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                          <span>{copiedKey === 'txt_val' ? 'Copied' : 'Copy'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {verifyMethod === 'token_file' && (
+                  <div className="space-y-2.5">
+                    <div className="font-extrabold text-slate-900 flex items-center gap-1.5">
+                      <FileCode2 className="w-4 h-4 text-emerald-600" />
+                      Token File Verification (HTTP Probe)
+                    </div>
+                    <p className="text-slate-600">
+                      Upload a plain text file accessible via public HTTP(S) at the root of your web server:
+                    </p>
+                    <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2 font-mono text-[11px]">
+                      <div>
+                        <span className="text-[10px] text-slate-400 font-sans font-bold uppercase block">File Path:</span>
+                        <code className="text-slate-900 font-bold">/.well-known/thirdeye-verify.txt</code>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
+                        <div className="truncate">
+                          <span className="text-[10px] text-slate-400 font-sans font-bold uppercase block">File Content:</span>
+                          <code className="text-emerald-700 font-bold">{verifyTokenData?.token || overview?.project?.verification_token}</code>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => copyCode('token_val', verifyTokenData?.token || overview?.project?.verification_token || '')}
+                          className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center gap-1 flex-shrink-0 cursor-pointer"
+                        >
+                          {copiedKey === 'token_val' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                          <span>{copiedKey === 'token_val' ? 'Copied' : 'Copy'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {verifyResult && (
+                <div className={`p-3.5 rounded-2xl text-xs flex items-center gap-2.5 ${
+                  verifyResult.verified
+                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                    : 'bg-rose-50 text-rose-800 border border-rose-200'
+                }`}>
+                  {verifyResult.verified ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                  )}
+                  <span className="font-semibold">{verifyResult.message}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowVerifyModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all cursor-pointer"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={handleVerifyOwnership}
+                  disabled={verifying}
+                  className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold flex items-center gap-2 transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                >
+                  {verifying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                  <span>{verifying ? 'Verifying Asset...' : 'Verify Domain Ownership Now'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
