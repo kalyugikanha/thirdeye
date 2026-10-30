@@ -7,6 +7,11 @@ All authenticated endpoints are strictly scoped to the caller's organization pro
 Public SDK endpoints are authenticated via project api_key.
 """
 import uuid
+import json
+import urllib.request
+import urllib.error
+import hmac
+import hashlib
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -460,6 +465,380 @@ def simulate_form_analytics(project_id: Optional[int] = None, db: Session = Depe
         created += 1
     db.commit()
     return {'created': created}
+
+
+# ------------------------------------------- 3.5. Abandoned Cart & Checkout Recovery Webhooks
+class RecoveryConfigUpdate(BaseModel):
+    project_id: Optional[int] = None
+    webhook_url: str
+    secret_token: Optional[str] = None
+    is_active: bool = True
+    trigger_on: str = "all_abandoned"  # "all_abandoned", "high_friction_only"
+    min_hesitation_sec: int = 20
+
+
+class RecoveryTestRequest(BaseModel):
+    project_id: Optional[int] = None
+    webhook_url: Optional[str] = None
+
+
+class RecoveryManualDispatch(BaseModel):
+    project_id: Optional[int] = None
+    session_id: str
+    url: str
+    last_field: Optional[str] = None
+    duration_seconds: Optional[int] = 30
+    friction_tags: Optional[List[str]] = None
+
+
+def _dispatch_recovery_webhook(webhook_url: str, secret_token: Optional[str], payload: dict) -> tuple:
+    payload_bytes = json.dumps(payload).encode('utf-8')
+    headers = {
+        'Content-Type': 'application/json',
+        'User-Agent': 'ThirdEye-Checkout-Recovery/1.0',
+        'X-ThirdEye-Event': 'checkout.abandoned'
+    }
+    if secret_token:
+        sig = hmac.new(secret_token.encode('utf-8'), payload_bytes, hashlib.sha256).hexdigest()
+        headers['X-ThirdEye-Signature'] = f"sha256={sig}"
+
+    req = urllib.request.Request(webhook_url, data=payload_bytes, headers=headers, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=8) as response:
+            return response.status, "delivered"
+    except urllib.error.HTTPError as e:
+        return e.code, f"HTTP Error {e.code}: {e.reason}"
+    except Exception as e:
+        return 500, f"Dispatch Error: {str(e)}"
+
+
+@router.get('/api/v1/analytics/recovery/config')
+def get_recovery_config(project_id: Optional[int] = None, db: Session = Depends(get_db),
+                        current_user: models.User = Depends(auth.get_current_user)):
+    ids = _project_ids(db, current_user, project_id)
+    if not ids:
+        return {'configured': False, 'config': None}
+    pid = ids[0]
+    cfg = db.query(models.CheckoutRecoveryWebhook).filter(models.CheckoutRecoveryWebhook.project_id == pid).first()
+    if not cfg:
+        return {
+            'configured': False,
+            'config': {
+                'project_id': pid,
+                'webhook_url': '',
+                'secret_token': '',
+                'is_active': False,
+                'trigger_on': 'all_abandoned',
+                'min_hesitation_sec': 20,
+                'total_dispatched': 0,
+                'last_status': None,
+                'last_triggered_at': None
+            }
+        }
+    return {
+        'configured': True,
+        'config': {
+            'id': cfg.id,
+            'project_id': cfg.project_id,
+            'webhook_url': cfg.webhook_url,
+            'secret_token': cfg.secret_token or '',
+            'is_active': cfg.is_active,
+            'trigger_on': cfg.trigger_on,
+            'min_hesitation_sec': cfg.min_hesitation_sec,
+            'total_dispatched': cfg.total_dispatched,
+            'last_status': cfg.last_status,
+            'last_triggered_at': cfg.last_triggered_at.isoformat() if cfg.last_triggered_at else None
+        }
+    }
+
+
+@router.post('/api/v1/analytics/recovery/config')
+def update_recovery_config(data: RecoveryConfigUpdate, db: Session = Depends(get_db),
+                           current_user: models.User = Depends(auth.get_current_user)):
+    ids = _project_ids(db, current_user, data.project_id)
+    if not ids:
+        raise HTTPException(status_code=400, detail='Invalid project')
+    pid = ids[0]
+    cfg = db.query(models.CheckoutRecoveryWebhook).filter(models.CheckoutRecoveryWebhook.project_id == pid).first()
+    if not cfg:
+        cfg = models.CheckoutRecoveryWebhook(
+            project_id=pid,
+            webhook_url=data.webhook_url,
+            secret_token=data.secret_token,
+            is_active=data.is_active,
+            trigger_on=data.trigger_on,
+            min_hesitation_sec=data.min_hesitation_sec
+        )
+        db.add(cfg)
+    else:
+        cfg.webhook_url = data.webhook_url
+        cfg.secret_token = data.secret_token
+        cfg.is_active = data.is_active
+        cfg.trigger_on = data.trigger_on
+        cfg.min_hesitation_sec = data.min_hesitation_sec
+    db.commit()
+    db.refresh(cfg)
+    return {'status': 'saved', 'id': cfg.id, 'webhook_url': cfg.webhook_url, 'is_active': cfg.is_active}
+
+
+@router.post('/api/v1/analytics/recovery/test')
+def test_recovery_webhook(data: RecoveryTestRequest, db: Session = Depends(get_db),
+                          current_user: models.User = Depends(auth.get_current_user)):
+    ids = _project_ids(db, current_user, data.project_id)
+    if not ids:
+        raise HTTPException(status_code=400, detail='Invalid project')
+    pid = ids[0]
+    project = db.query(models.Project).filter(models.Project.id == pid).first()
+    pname = project.name if project else "SelfUp Community"
+
+    cfg = db.query(models.CheckoutRecoveryWebhook).filter(models.CheckoutRecoveryWebhook.project_id == pid).first()
+    target_url = (data.webhook_url or (cfg.webhook_url if cfg else None))
+    if not target_url or not target_url.strip():
+        raise HTTPException(status_code=400, detail='No webhook URL configured. Please specify a target webhook URL.')
+
+    secret = cfg.secret_token if cfg else None
+    test_session_id = f"test_{uuid.uuid4().hex[:12]}"
+    payload = {
+        "event": "checkout_abandoned.test",
+        "project_id": pid,
+        "project_name": pname,
+        "session_id": test_session_id,
+        "url": f"https://{project.domain or 'selfupcommunity.com'}/student/checkout?type=course&course_id=42",
+        "last_field": "billing_email",
+        "duration_seconds": 48,
+        "friction_tags": ["hesitation", "payment_friction"],
+        "device": "mobile",
+        "replay_url": f"https://thirdeye.colladome.com/analytics/sessions?session_id={test_session_id}",
+        "recovery_checkout_url": f"https://{project.domain or 'selfupcommunity.com'}/student/checkout?type=course&course_id=42&recovery=1",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+    code, msg = _dispatch_recovery_webhook(target_url, secret, payload)
+    status_str = "delivered" if (200 <= code < 300) else "failed"
+
+    log = models.CheckoutRecoveryLog(
+        project_id=pid,
+        session_id=test_session_id,
+        url=payload["url"],
+        last_field="billing_email",
+        duration_seconds=48,
+        friction_tags=json.dumps(["hesitation", "payment_friction"]),
+        status=status_str,
+        response_code=code
+    )
+    db.add(log)
+    if cfg:
+        cfg.total_dispatched += 1
+        cfg.last_triggered_at = datetime.utcnow()
+        cfg.last_status = status_str
+    db.commit()
+
+    return {
+        "status": status_str,
+        "response_code": code,
+        "message": msg,
+        "target_url": target_url,
+        "test_payload": payload
+    }
+
+
+@router.get('/api/v1/analytics/recovery/abandoned-sessions')
+def get_abandoned_sessions(project_id: Optional[int] = None, limit: int = 50,
+                           db: Session = Depends(get_db),
+                           current_user: models.User = Depends(auth.get_current_user)):
+    ids = _project_ids(db, current_user, project_id)
+    if not ids:
+        return {'total_abandoned': 0, 'potential_value_at_risk': 0, 'sessions': []}
+    pid = ids[0]
+
+    # Fetch recent checkout & cart interaction events
+    events = db.query(models.Event).filter(
+        models.Event.project_id == pid,
+        (models.Event.url.like('%checkout%') | models.Event.url.like('%cart%') | (models.Event.event_type == 'form_abandon'))
+    ).order_by(models.Event.id.desc()).limit(1500).all()
+
+    # Check which sessions have recordings
+    sids = [e.session_id for e in events if e.session_id]
+    recorded_sids = set()
+    if sids:
+        recs = db.query(models.SessionRecording.session_id).filter(
+            models.SessionRecording.session_id.in_(list(set(sids))[:500])
+        ).all()
+        recorded_sids = {r[0] for r in recs}
+
+    # Check which sessions have been dispatched
+    dispatched_map = {}
+    if sids:
+        dlogs = db.query(models.CheckoutRecoveryLog.session_id, models.CheckoutRecoveryLog.status).filter(
+            models.CheckoutRecoveryLog.project_id == pid,
+            models.CheckoutRecoveryLog.session_id.in_(list(set(sids))[:500])
+        ).all()
+        for r_sid, r_stat in dlogs:
+            dispatched_map[r_sid] = r_stat
+
+    sessions_map: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
+        'session_id': '',
+        'url': '',
+        'title': '',
+        'last_field': None,
+        'has_replay': False,
+        'device': 'desktop',
+        'created_at': None,
+        'friction_tags': set(),
+        'events_count': 0
+    })
+
+    for e in events:
+        sid = e.session_id
+        if not sid:
+            continue
+        entry = sessions_map[sid]
+        entry['session_id'] = sid
+        entry['events_count'] += 1
+        if not entry['created_at']:
+            entry['created_at'] = e.created_at.isoformat() if e.created_at else None
+        if sid in recorded_sids:
+            entry['has_replay'] = True
+        if e.url and ('checkout' in e.url or not entry['url']):
+            entry['url'] = e.url
+
+        props = e.properties or {}
+        if not entry['title'] and props.get('title'):
+            entry['title'] = props['title']
+        if props.get('last_field'):
+            entry['last_field'] = props['last_field']
+        elif not entry['last_field'] and props.get('field'):
+            entry['last_field'] = props['field']
+
+        os_name = (props.get('os') or '').lower()
+        if 'android' in os_name or 'ios' in os_name or 'iphone' in os_name:
+            entry['device'] = 'mobile'
+
+        if e.event_type == 'rage_click':
+            entry['friction_tags'].add('rage_click')
+        if e.event_type == 'form_abandon':
+            entry['friction_tags'].add('form_abandon')
+
+    abandoned_list = []
+    for sid, data in sessions_map.items():
+        if not data['url']:
+            continue
+        tags = list(data['friction_tags'])
+        lf = data['last_field'] or 'checkout_form'
+        if any(k in lf.lower() for k in ['pay', 'card', 'billing', 'coupon', 'gst', 'affiliate']):
+            tags.append('payment_friction')
+        if not tags:
+            tags.append('hesitation')
+
+        abandoned_list.append({
+            'session_id': sid,
+            'url': data['url'],
+            'title': data['title'] or 'Checkout / Cart',
+            'last_field': lf,
+            'has_replay': data['has_replay'],
+            'device': data['device'],
+            'friction_tags': tags[:3],
+            'events_count': data['events_count'],
+            'created_at': data['created_at'],
+            'dispatched_status': dispatched_map.get(sid, None)
+        })
+
+    # Sort most recent first
+    abandoned_list.sort(key=lambda x: x['created_at'] or '', reverse=True)
+    total_abandoned = len(abandoned_list)
+    # Average Order Value estimate (SelfUp default course AOV is ~₹2,499 / $30)
+    potential_risk = total_abandoned * 2499
+
+    return {
+        'total_abandoned': total_abandoned,
+        'potential_value_at_risk': potential_risk,
+        'average_order_value': 2499,
+        'sessions': abandoned_list[:limit]
+    }
+
+
+@router.post('/api/v1/analytics/recovery/dispatch-now')
+def dispatch_recovery_now(data: RecoveryManualDispatch, db: Session = Depends(get_db),
+                          current_user: models.User = Depends(auth.get_current_user)):
+    ids = _project_ids(db, current_user, data.project_id)
+    if not ids:
+        raise HTTPException(status_code=400, detail='Invalid project')
+    pid = ids[0]
+    project = db.query(models.Project).filter(models.Project.id == pid).first()
+    pname = project.name if project else "SelfUp Community"
+
+    cfg = db.query(models.CheckoutRecoveryWebhook).filter(models.CheckoutRecoveryWebhook.project_id == pid).first()
+    if not cfg or not cfg.webhook_url:
+        raise HTTPException(status_code=400, detail='No recovery webhook URL configured. Please configure webhook first.')
+
+    payload = {
+        "event": "checkout_abandoned",
+        "project_id": pid,
+        "project_name": pname,
+        "session_id": data.session_id,
+        "url": data.url,
+        "last_field": data.last_field or "checkout_form",
+        "duration_seconds": data.duration_seconds or 30,
+        "friction_tags": data.friction_tags or ["hesitation"],
+        "replay_url": f"https://thirdeye.colladome.com/analytics/sessions?session_id={data.session_id}",
+        "recovery_checkout_url": f"{data.url}{'&' if '?' in data.url else '?'}recovery=1",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+    code, msg = _dispatch_recovery_webhook(cfg.webhook_url, cfg.secret_token, payload)
+    status_str = "delivered" if (200 <= code < 300) else "failed"
+
+    log = models.CheckoutRecoveryLog(
+        project_id=pid,
+        session_id=data.session_id,
+        url=data.url,
+        last_field=data.last_field,
+        duration_seconds=data.duration_seconds or 30,
+        friction_tags=json.dumps(data.friction_tags or []),
+        status=status_str,
+        response_code=code
+    )
+    db.add(log)
+    cfg.total_dispatched += 1
+    cfg.last_triggered_at = datetime.utcnow()
+    cfg.last_status = status_str
+    db.commit()
+
+    return {
+        "status": status_str,
+        "response_code": code,
+        "message": msg,
+        "session_id": data.session_id
+    }
+
+
+@router.get('/api/v1/analytics/recovery/logs')
+def get_recovery_logs(project_id: Optional[int] = None, limit: int = 20,
+                      db: Session = Depends(get_db),
+                      current_user: models.User = Depends(auth.get_current_user)):
+    ids = _project_ids(db, current_user, project_id)
+    if not ids:
+        return {'logs': []}
+    pid = ids[0]
+    logs = db.query(models.CheckoutRecoveryLog).filter(
+        models.CheckoutRecoveryLog.project_id == pid
+    ).order_by(models.CheckoutRecoveryLog.id.desc()).limit(limit).all()
+
+    return {
+        'logs': [
+            {
+                'id': l.id,
+                'session_id': l.session_id,
+                'url': l.url,
+                'last_field': l.last_field,
+                'duration_seconds': l.duration_seconds,
+                'status': l.status,
+                'response_code': l.response_code,
+                'created_at': l.created_at.isoformat() if l.created_at else None
+            } for l in logs
+        ]
+    }
+
 
 
 # ------------------------------------------- 4. A/B Testing & Feature Flags

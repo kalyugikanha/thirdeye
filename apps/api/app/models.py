@@ -541,3 +541,36 @@ class DigestSubscription(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship('Project')
+
+
+class CheckoutRecoveryWebhook(Base):
+    __tablename__ = 'checkout_recovery_webhooks'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    webhook_url = Column(String, nullable=False)
+    secret_token = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    trigger_on = Column(String, default='all_abandoned')  # 'all_abandoned', 'high_friction_only'
+    min_hesitation_sec = Column(Integer, default=20)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_triggered_at = Column(DateTime, nullable=True)
+    total_dispatched = Column(Integer, default=0)
+    last_status = Column(String, nullable=True)  # 'delivered', 'failed'
+
+    project = relationship('Project')
+
+
+class CheckoutRecoveryLog(Base):
+    __tablename__ = 'checkout_recovery_logs'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    session_id = Column(String, index=True)
+    url = Column(String)
+    last_field = Column(String, nullable=True)
+    duration_seconds = Column(Integer, default=0)
+    friction_tags = Column(String, nullable=True)  # JSON string e.g. ["rage_click", "hesitation"]
+    status = Column(String, default='delivered')    # 'delivered', 'failed', 'pending'
+    response_code = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship('Project')

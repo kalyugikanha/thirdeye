@@ -49,6 +49,8 @@ def safe_migrate_sqlite_schema():
     secureeye.migrate_secureeye_schema(engine)
     migration_sqls = [
         "CREATE TABLE IF NOT EXISTS digest_subscriptions (id INTEGER PRIMARY KEY, project_id INTEGER, recipients TEXT, is_active BOOLEAN DEFAULT 1, delivery_day TEXT DEFAULT 'Monday', delivery_time_ist TEXT DEFAULT '09:00 AM', last_sent_at DATETIME, last_status TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE TABLE IF NOT EXISTS checkout_recovery_webhooks (id INTEGER PRIMARY KEY, project_id INTEGER, webhook_url TEXT, secret_token TEXT, is_active BOOLEAN DEFAULT 1, trigger_on TEXT DEFAULT 'all_abandoned', min_hesitation_sec INTEGER DEFAULT 20, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, last_triggered_at DATETIME, total_dispatched INTEGER DEFAULT 0, last_status TEXT)",
+        "CREATE TABLE IF NOT EXISTS checkout_recovery_logs (id INTEGER PRIMARY KEY, project_id INTEGER, session_id TEXT, url TEXT, last_field TEXT, duration_seconds INTEGER DEFAULT 0, friction_tags TEXT, status TEXT DEFAULT 'delivered', response_code INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)",
         "ALTER TABLE projects ADD COLUMN dns_verified BOOLEAN DEFAULT 0",
         "ALTER TABLE projects ADD COLUMN dns_token TEXT",
         "ALTER TABLE organizations ADD COLUMN plan TEXT DEFAULT 'Pro'",
