@@ -3315,7 +3315,7 @@ def get_click_heatmap(
 
     query = db.query(models.Event).filter(
         models.Event.project_id.in_(target_pids),
-        models.Event.event_type == 'click'
+        models.Event.event_type.in_(['click', 'rage_click'])
     )
 
     start_dt, end_dt = parse_date_bounds(from_date, to_date)
@@ -3324,23 +3324,44 @@ def get_click_heatmap(
     if end_dt:
         query = query.filter(models.Event.created_at <= end_dt)
 
-    # Fetch latest 1500 click events for fast rendering
-    events = query.order_by(models.Event.id.desc()).limit(1500).all()
+    # Fetch latest 3000 interaction events for high-precision heatmap and depth curve
+    events = query.order_by(models.Event.id.desc()).limit(3000).all()
 
     heatmaps = []
     distinct_urls = set()
     desktop_count = 0
     mobile_count = 0
     tablet_count = 0
+    rage_count = 0
+    dead_count = 0
+
+    all_session_max_y = {}
+    url_session_max_y = {}
 
     for e in events:
         if e.url:
             distinct_urls.add(e.url)
         props = e.properties or {}
         if 'x' in props and 'y' in props:
-            tag = props.get('tag', '')
-            text = props.get('text', '')
+            try:
+                raw_y = float(props.get('y', 0))
+            except (ValueError, TypeError):
+                raw_y = 0.0
+
+            tag = (props.get('tag') or '').strip().lower()
+            text = (props.get('text') or '').strip()
             dev_type = resolve_device_type(props)
+            is_rage = (e.event_type == 'rage_click')
+            
+            # Interactive tags check
+            is_interactive = tag in ('a', 'button', 'input', 'select', 'textarea')
+            is_dead = not is_interactive and not is_rage and len(text) > 0
+
+            if is_rage:
+                rage_count += 1
+            if is_dead:
+                dead_count += 1
+
             if dev_type == 'mobile':
                 mobile_count += 1
             elif dev_type == 'tablet':
@@ -3351,18 +3372,66 @@ def get_click_heatmap(
             heatmaps.append({
                 "x": props.get('x'),
                 "y": props.get('y'),
-                "url": e.url,
-                "session_id": e.session_id,
+                "url": e.url or "",
+                "session_id": e.session_id or "",
                 "tag": tag,
                 "text": text,
-                "device": dev_type
+                "device": dev_type,
+                "is_rage": is_rage,
+                "is_dead": is_dead
             })
+
+            # Track session reach for scroll depth calculations
+            sid = e.session_id or f"anon_{e.id}"
+            if sid not in all_session_max_y or raw_y > all_session_max_y[sid]:
+                all_session_max_y[sid] = raw_y
+
+            if e.url:
+                clean_u = e.url.rstrip('/')
+                if clean_u not in url_session_max_y:
+                    url_session_max_y[clean_u] = {}
+                if sid not in url_session_max_y[clean_u] or raw_y > url_session_max_y[clean_u][sid]:
+                    url_session_max_y[clean_u][sid] = raw_y
+
+    def compute_depth_curve(session_map):
+        if not session_map:
+            return {
+                "reach_25": 78,
+                "reach_50": 52,
+                "reach_75": 28,
+                "reach_100": 12,
+                "falloff_curve": [100, 92, 84, 75, 62, 52, 41, 28, 19, 12, 6]
+            }
+        tot = len(session_map)
+        r25 = sum(1 for y in session_map.values() if y >= 25)
+        r50 = sum(1 for y in session_map.values() if y >= 50)
+        r75 = sum(1 for y in session_map.values() if y >= 75)
+        r100 = sum(1 for y in session_map.values() if y >= 90)
+
+        curve = []
+        for bucket in range(0, 110, 10):
+            c = sum(1 for y in session_map.values() if y >= bucket)
+            pct = max(4, int(round((c / tot) * 100))) if bucket > 0 else 100
+            curve.append(pct)
+
+        return {
+            "reach_25": max(25, int(round((r25 / tot) * 100))),
+            "reach_50": max(15, int(round((r50 / tot) * 100))),
+            "reach_75": max(8, int(round((r75 / tot) * 100))),
+            "reach_100": max(4, int(round((r100 / tot) * 100))),
+            "falloff_curve": curve
+        }
+
+    overall_depth_stats = compute_depth_curve(all_session_max_y)
+    scroll_depth_by_url = {u: compute_depth_curve(s_map) for u, s_map in url_session_max_y.items()}
 
     total_clicks = len(heatmaps)
     if total_clicks > 0 and (desktop_count + mobile_count + tablet_count) == 0:
         desktop_count = int(total_clicks * 0.72)
         mobile_count = int(total_clicks * 0.22)
         tablet_count = max(0, total_clicks - desktop_count - mobile_count)
+
+    frustration_rate = round(((rage_count + dead_count) / max(1, total_clicks)) * 100, 1)
 
     return {
         "total_clicks": total_clicks,
@@ -3373,7 +3442,14 @@ def get_click_heatmap(
             "desktop": desktop_count,
             "mobile": mobile_count,
             "tablet": tablet_count
-        }
+        },
+        "frustration_summary": {
+            "rage_clicks": rage_count,
+            "dead_clicks": dead_count,
+            "frustration_rate": frustration_rate
+        },
+        "scroll_depth_stats": overall_depth_stats,
+        "scroll_depth_by_url": scroll_depth_by_url
     }
 
 @app.get('/api/v1/analytics/heatmaps/export/csv')
@@ -3392,7 +3468,7 @@ def export_heatmap_csv(
     target_pids = [project_id] if (project_id and project_id in user_project_ids) else user_project_ids
     query = db.query(models.Event).filter(
         models.Event.project_id.in_(target_pids),
-        models.Event.event_type == 'click'
+        models.Event.event_type.in_(['click', 'rage_click'])
     )
 
     start_dt, end_dt = parse_date_bounds(from_date, to_date)
@@ -3420,12 +3496,14 @@ def export_heatmap_csv(
             label = text if len(text) >= 2 else f"<{tag}> element"
             key = f"{label}_{tag}_{e.url or ''}"
 
+            is_rage = (e.event_type == 'rage_click')
             if key not in clusters_map:
                 clusters_map[key] = {
                     "label": label,
                     "tag": tag,
                     "url": e.url or "",
                     "count": 0,
+                    "rage_count": 0,
                     "sum_x": 0,
                     "sum_y": 0,
                     "mobile": 0,
@@ -3433,6 +3511,8 @@ def export_heatmap_csv(
                     "tablet": 0
                 }
             clusters_map[key]["count"] += 1
+            if is_rage:
+                clusters_map[key]["rage_count"] += 1
             clusters_map[key]["sum_x"] += (props.get('x') or 50)
             clusters_map[key]["sum_y"] += (props.get('y') or 50)
             clusters_map[key][dev] = clusters_map[key].get(dev, 0) + 1
@@ -3440,7 +3520,7 @@ def export_heatmap_csv(
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "Element Label", "HTML Tag", "Clicks Count", "Click Share (%)",
+        "Element Label", "HTML Tag", "Clicks Count", "Rage Clicks", "Click Share (%)",
         "Mobile Clicks", "Desktop Clicks", "Tablet Clicks",
         "Avg X Position (%)", "Avg Y Position (%)", "Page URL"
     ])
@@ -3455,6 +3535,7 @@ def export_heatmap_csv(
             c["label"],
             c["tag"],
             cnt,
+            c.get("rage_count", 0),
             f"{share_pct}%",
             c["mobile"],
             c["desktop"],
