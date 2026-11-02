@@ -75,9 +75,9 @@ def run_tests():
         req = urllib.request.Request(block_url, data=block_payload, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=10) as resp:
             b_data = json.loads(resp.read().decode("utf-8"))
-            blocked_obj = b_data.get("blocked", {})
-            blocked_id = blocked_obj.get("id")
-            print(f" [PASS] 1-Click IP Block: Successfully blocked {blocked_obj.get('ip_address')} (Rule ID: {blocked_id})")
+            blocked_id = b_data.get("id")
+            ip_str = b_data.get("ip_address")
+            print(f" [PASS] 1-Click IP Block: Successfully blocked {ip_str} (Rule ID: {blocked_id})")
 
         # Now unblock
         if blocked_id:

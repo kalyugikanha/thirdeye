@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, Response
+from collections import defaultdict
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func
 from pydantic import BaseModel
@@ -2525,7 +2526,11 @@ def block_threat_ip(
         )
         db.add(b)
         db.commit()
-    return {"status": "blocked", "ip_address": ip}
+        db.refresh(b)
+        rule_id = b.id
+    else:
+        rule_id = existing.id
+    return {"status": "blocked", "ip_address": ip, "id": rule_id}
 
 
 @router.get("/api/v1/secureeye/threats/blocked-ips")
