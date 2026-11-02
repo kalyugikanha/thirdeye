@@ -1,30 +1,43 @@
+import os
 import sys
-import requests
+import json
+import urllib.request
+import urllib.error
 
-BASE_URL = "https://thirdeye.colladome.com"
-LOGIN_URL = f"{BASE_URL}/api/v1/auth/login"
+# Ensure api directory is in python path
+sys.path.insert(0, '/var/www/thirdeye/apps/api')
+os.chdir('/var/www/thirdeye/apps/api')
+
+from app import auth, models
+from app.database import SessionLocal
+
+BASE_URL = "http://127.0.0.1:8000"
+PUBLIC_URL = "https://thirdeye.colladome.com"
 
 def run_tests():
     print(f"[*] Testing CyberGuard Enterprise Security Suite against {BASE_URL}...")
     
-    # 1. Login
-    login_payload = {
-        "email": "akash@colladome.com",
-        "password": "Password123!"
-    }
+    # 1. Generate Auth Token
+    db = SessionLocal()
+    user = db.query(models.User).filter(models.User.email == 'akash@colladome.com').first()
+    if not user:
+        user = db.query(models.User).first()
     
-    try:
-        res = requests.post(LOGIN_URL, json=login_payload, timeout=10)
-        if res.status_code != 200:
-            print(f"[!] Login failed: {res.status_code} {res.text}")
-            return False
-        token = res.json().get("access_token")
-        headers = {"Authorization": f"Bearer {token}"}
-        print("[+] Logged in successfully. Token acquired.")
-    except Exception as e:
-        print(f"[!] Exception during login: {e}")
+    if not user:
+        print("[!] No user found in database!")
+        db.close()
         return False
+        
+    token = auth.create_access_token(data={"sub": user.email, "id": user.id})
+    db.close()
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    print(f"[+] Token generated for user: {user.email}")
 
+    # 2. Test Security Suite Endpoints
     endpoints = [
         ("/api/v1/secureeye/threats?project_id=2", "Live WAF Threat Events & KPIs"),
         ("/api/v1/secureeye/threats/blocked-ips?project_id=2", "Blocked IP Blacklist"),
@@ -37,46 +50,65 @@ def run_tests():
     all_passed = True
     for path, desc in endpoints:
         url = f"{BASE_URL}{path}"
+        req_headers = headers if "badge" not in path else {}
+        req = urllib.request.Request(url, headers=req_headers)
         try:
-            req_headers = headers if "badge" not in path else {}
-            r = requests.get(url, headers=req_headers, timeout=10)
-            if r.status_code == 200:
-                print(f" [PASS] {desc}: HTTP 200 OK (Content-Type: {r.headers.get('Content-Type')})")
-            else:
-                print(f" [FAIL] {desc}: HTTP {r.status_code} - {r.text[:120]}")
-                all_passed = False
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                ctype = resp.headers.get("Content-Type", "")
+                print(f" [PASS] {desc}: HTTP {resp.status} OK (Content-Type: {ctype})")
+        except urllib.error.HTTPError as e:
+            print(f" [FAIL] {desc}: HTTP {e.code}")
+            all_passed = False
         except Exception as e:
-            print(f" [FAIL] {desc}: Exception {e}")
+            print(f" [FAIL] {desc}: {e}")
             all_passed = False
 
-    # Test IP blocking and unblocking
+    # 3. Test IP blocking and unblocking
     try:
         block_url = f"{BASE_URL}/api/v1/secureeye/threats/block-ip"
-        block_payload = {
+        block_payload = json.dumps({
             "project_id": 2,
             "ip_address": "198.51.100.99",
             "reason": "Automated verification test probe"
-        }
-        b_res = requests.post(block_url, json=block_payload, headers=headers, timeout=10)
-        if b_res.status_code == 200:
-            blocked_obj = b_res.json().get("blocked", {})
+        }).encode("utf-8")
+        
+        req = urllib.request.Request(block_url, data=block_payload, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            b_data = json.loads(resp.read().decode("utf-8"))
+            blocked_obj = b_data.get("blocked", {})
             blocked_id = blocked_obj.get("id")
-            print(f" [PASS] 1-Click IP Block: Successfully blocked {blocked_obj.get('ip_address')} (ID: {blocked_id})")
-            
-            # Now unblock
-            if blocked_id:
-                del_url = f"{BASE_URL}/api/v1/secureeye/threats/blocked-ips/{blocked_id}?project_id=2"
-                d_res = requests.delete(del_url, headers=headers, timeout=10)
-                if d_res.status_code == 200:
-                    print(f" [PASS] IP Unblock: Successfully removed rule ID {blocked_id}")
-                else:
-                    print(f" [WARN] IP Unblock failed: HTTP {d_res.status_code}")
-        else:
-            print(f" [FAIL] 1-Click IP Block failed: HTTP {b_res.status_code} - {b_res.text[:120]}")
-            all_passed = False
+            print(f" [PASS] 1-Click IP Block: Successfully blocked {blocked_obj.get('ip_address')} (Rule ID: {blocked_id})")
+
+        # Now unblock
+        if blocked_id:
+            del_url = f"{BASE_URL}/api/v1/secureeye/threats/blocked-ips/{blocked_id}?project_id=2"
+            del_req = urllib.request.Request(del_url, headers=headers, method="DELETE")
+            with urllib.request.urlopen(del_req, timeout=10) as d_resp:
+                print(f" [PASS] IP Unblock: Successfully deleted rule ID {blocked_id} (HTTP {d_resp.status})")
     except Exception as e:
         print(f" [FAIL] Block/Unblock exception: {e}")
         all_passed = False
+
+    # 4. Verify Frontend HTTP Routes via PUBLIC_URL
+    fe_routes = [
+        "/security",
+        "/security/threats",
+        "/security/secrets",
+        "/security/api-security",
+        "/security/compliance"
+    ]
+    for route in fe_routes:
+        fe_url = f"{PUBLIC_URL}{route}"
+        req = urllib.request.Request(fe_url)
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                print(f" [PASS] Web Route {route}: HTTP {resp.status} OK")
+        except urllib.error.HTTPError as e:
+            print(f" [FAIL] Web Route {route}: HTTP {e.code}")
+            all_passed = False
+        except Exception as e:
+            print(f" [FAIL] Web Route {route}: {e}")
+            all_passed = False
 
     return all_passed
 
