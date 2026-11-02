@@ -18,6 +18,7 @@ import {
   Cpu,
   Share2,
   ShieldCheck,
+  ShieldAlert,
   Lock,
   ChevronRight,
   AlertTriangle,
@@ -47,15 +48,24 @@ import { useEffect, useState } from 'react';
 import { apiUrl, API_BASE } from '@/lib/api';
 import AiGuideWidget from '@/components/AiGuideWidget';
 
+interface NavSubItem {
+  href: string;
+  title: string;
+  badge?: string;
+}
+
+interface NavItem {
+  href: string;
+  icon: any;
+  title: string;
+  badge?: string;
+  lockedUnlessConnected?: boolean;
+  subItems?: NavSubItem[];
+}
+
 interface NavGroup {
   label: string;
-  items: {
-    href: string;
-    icon: any;
-    title: string;
-    badge?: string;
-    lockedUnlessConnected?: boolean;
-  }[];
+  items: NavItem[];
 }
 
 const NAV_GROUPS: NavGroup[] = [
@@ -78,9 +88,26 @@ const NAV_GROUPS: NavGroup[] = [
     ]
   },
   {
+    label: "Cyber Security Suite",
+    items: [
+      {
+        href: '/security',
+        icon: ShieldAlert,
+        title: 'CyberGuard Security',
+        badge: 'Enterprise',
+        subItems: [
+          { href: '/security', title: 'Command Center & Posture', badge: 'Posture' },
+          { href: '/security/threats', title: 'Live WAF & Threat Radar', badge: 'Live WAF' },
+          { href: '/security/secrets', title: 'Secret Leak Shield (DLP)', badge: 'DLP' },
+          { href: '/security/api-security', title: 'API Security & Pen-Test', badge: 'OWASP' },
+          { href: '/security/compliance', title: 'Compliance & Trust Badge', badge: 'Audit' },
+        ]
+      }
+    ]
+  },
+  {
     label: "Health & APM",
     items: [
-      { href: '/security', icon: ShieldCheck, title: 'SecureEye Cyber & QA', badge: '3-Phase' },
       { href: '/performance', icon: Gauge, title: 'Core Web Vitals', badge: 'CWV' },
       { href: '/devops', icon: Cpu, title: 'Server APM & APIs' },
       { href: '/devops/network', icon: WifiOff, title: 'Network & API Inspector', badge: 'XHR' },
@@ -123,6 +150,7 @@ export default function Sidebar() {
   const [newDomain, setNewDomain] = useState('');
   const [addingDomain, setAddingDomain] = useState(false);
   const [domainError, setDomainError] = useState('');
+  const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({ '/security': true });
   const [resources, setResources] = useState<{
     server: {
       droplet_ip: string;
@@ -530,50 +558,104 @@ export default function Sidebar() {
                 <nav className="space-y-1">
                   {group.items.map((item) => {
                     const Icon = item.icon;
-                    const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
+                    const hasSubItems = Boolean(item.subItems && item.subItems.length > 0);
+                    const isSubItemActive = Boolean(item.subItems?.some(s => pathname === s.href));
+                    const isActive = isSubItemActive || pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
                     const isLocked = item.lockedUnlessConnected && !isConnected;
+                    const isExpanded = expandedMenus[item.href] ?? (pathname.startsWith(item.href));
 
                     return (
-                      <Link
-                        key={item.href}
-                        href={isLocked ? '#' : item.href}
-                        onClick={(e) => {
-                          if (isLocked) {
-                            e.preventDefault();
-                            setShowActivationModal(true);
-                          }
-                        }}
-                        className={`flex items-center justify-between px-3.5 py-2.5 rounded-2xl text-xs transition-all ${
-                          isActive
-                            ? 'bg-white shadow-sm border border-slate-200/60 text-slate-900 font-bold'
-                            : isLocked
-                            ? 'text-slate-400 cursor-pointer hover:bg-slate-50/80'
-                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/60 font-medium'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <Icon className={`w-4 h-4 ${isActive ? 'text-rose-500' : isLocked ? 'text-slate-300' : 'text-slate-400'}`} />
-                          <span>{item.title}</span>
+                      <div key={item.href} className="space-y-1">
+                        <div className="flex items-center">
+                          <Link
+                            href={isLocked ? '#' : item.href}
+                            onClick={(e) => {
+                              if (isLocked) {
+                                e.preventDefault();
+                                setShowActivationModal(true);
+                              }
+                            }}
+                            className={`flex-1 flex items-center justify-between px-3.5 py-2.5 rounded-2xl text-xs transition-all ${
+                              isActive && !hasSubItems
+                                ? 'bg-white shadow-sm border border-slate-200/60 text-slate-900 font-bold'
+                                : isSubItemActive
+                                ? 'bg-white/80 border border-slate-200/50 text-slate-900 font-bold'
+                                : isLocked
+                                ? 'text-slate-400 cursor-pointer hover:bg-slate-50/80'
+                                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/60 font-medium'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <Icon className={`w-4 h-4 ${isActive ? 'text-rose-500' : isLocked ? 'text-slate-300' : 'text-slate-400'}`} />
+                              <span>{item.title}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              {isLocked ? (
+                                <span className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full border border-amber-200/60">
+                                  <Lock className="w-3 h-3 text-amber-500" />
+                                  <span>Unlock</span>
+                                </span>
+                              ) : item.href === '/alerts' && newsItems.length > 0 ? (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-extrabold bg-rose-600 text-white animate-pulse">
+                                  {newsItems.length} Live
+                                </span>
+                              ) : item.badge ? (
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase ${
+                                  isActive
+                                    ? 'bg-rose-50 text-rose-500'
+                                    : 'bg-slate-100 text-slate-500'
+                                }`}>
+                                  {item.badge}
+                                </span>
+                              ) : null}
+
+                              {hasSubItems && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setExpandedMenus(prev => ({ ...prev, [item.href]: !isExpanded }));
+                                  }}
+                                  className="p-1 rounded-lg hover:bg-slate-200/60 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                                  title="Toggle Submenu"
+                                >
+                                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                                </button>
+                              )}
+                            </div>
+                          </Link>
                         </div>
-                        {isLocked ? (
-                          <span className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full border border-amber-200/60">
-                            <Lock className="w-3 h-3 text-amber-500" />
-                            <span>Unlock</span>
-                          </span>
-                        ) : item.href === '/alerts' && newsItems.length > 0 ? (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-extrabold bg-rose-600 text-white animate-pulse">
-                            {newsItems.length} Live
-                          </span>
-                        ) : item.badge ? (
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase ${
-                            isActive
-                              ? 'bg-rose-50 text-rose-500'
-                              : 'bg-slate-100 text-slate-500'
-                          }`}>
-                            {item.badge}
-                          </span>
-                        ) : null}
-                      </Link>
+
+                        {/* Sub-Items Accordion */}
+                        {hasSubItems && isExpanded && (
+                          <div className="ml-7 pl-3 border-l-2 border-slate-200/70 space-y-1 my-1">
+                            {item.subItems!.map((sub) => {
+                              const isCurrentSubActive = pathname === sub.href;
+                              return (
+                                <Link
+                                  key={sub.href}
+                                  href={sub.href}
+                                  className={`flex items-center justify-between px-3 py-1.5 rounded-xl text-[11px] transition-all ${
+                                    isCurrentSubActive
+                                      ? 'bg-rose-50 text-rose-600 font-bold border border-rose-200/60 shadow-2xs'
+                                      : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100/60 font-medium'
+                                  }`}
+                                >
+                                  <span className="truncate">{sub.title}</span>
+                                  {sub.badge && (
+                                    <span className={`text-[9px] px-1.5 py-0.2 rounded-md font-bold uppercase ${
+                                      isCurrentSubActive ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-400'
+                                    }`}>
+                                      {sub.badge}
+                                    </span>
+                                  )}
+                                </Link>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </nav>

@@ -574,3 +574,33 @@ class CheckoutRecoveryLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship('Project')
+
+
+class SecureEyeThreatEvent(Base):
+    __tablename__ = 'secureeye_threat_events'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    ip_address = Column(String, index=True)
+    country = Column(String, default='Unknown')
+    country_code = Column(String, default='UN')
+    threat_type = Column(String)  # 'sqli', 'xss', 'path_traversal', 'credential_stuffing', 'bot_scraper'
+    target_path = Column(String)
+    payload_sample = Column(Text, nullable=True)
+    severity = Column(String, default='HIGH')  # 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'
+    action_taken = Column(String, default='BLOCKED')  # 'BLOCKED', 'CHALLENGED', 'FLAGGED'
+    user_agent = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    project = relationship('Project')
+
+
+class SecureEyeBlockedIP(Base):
+    __tablename__ = 'secureeye_blocked_ips'
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey('projects.id'), index=True)
+    ip_address = Column(String, index=True)
+    reason = Column(String, default='Repeated exploit attempts')
+    blocked_by = Column(String, default='WAF Automated Rule')
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship('Project')

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
+import Link from 'next/link';
 import PaginationControls from '@/components/PaginationControls';
 import PortalNewsBanner from '@/components/PortalNewsBanner';
 import { apiUrl } from '@/lib/api';
@@ -512,6 +513,25 @@ export default function SecureEyeMasterPage() {
                 )}
               </div>
             </div>
+          </div>
+
+          {/* Quick Sub-Navigation Pills */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href="/security" className="px-3.5 py-1.5 rounded-xl text-xs font-extrabold bg-slate-900 text-white shadow-xs">
+              Command Center
+            </Link>
+            <Link href="/security/threats" className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600 hover:text-slate-900 transition-colors">
+              WAF &amp; Threat Radar
+            </Link>
+            <Link href="/security/secrets" className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600 hover:text-slate-900 transition-colors">
+              Secret Leak Shield (DLP)
+            </Link>
+            <Link href="/security/api-security" className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600 hover:text-slate-900 transition-colors">
+              API Security &amp; Pen-Test
+            </Link>
+            <Link href="/security/compliance" className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600 hover:text-slate-900 transition-colors">
+              Compliance &amp; Trust Badge
+            </Link>
           </div>
 
           {/* Scan Bar */}
