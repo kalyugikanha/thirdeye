@@ -71,7 +71,9 @@ export default function NetworkInspectorPage() {
     }
     setLoading(true);
     try {
-      const res = await fetch(apiUrl('/api/v1/network/requests?limit=100'), {
+      const activePid = localStorage.getItem('te_active_project_id');
+      const pidParam = activePid ? `&project_id=${encodeURIComponent(activePid)}` : '';
+      const res = await fetch(apiUrl(`/api/v1/network/requests?limit=100${pidParam}`), {
         headers: { Authorization: `Bearer ${t}` }
       });
       if (res.ok) {
@@ -96,7 +98,9 @@ export default function NetworkInspectorPage() {
     if (!t) return;
     setSimulating(true);
     try {
-      await fetch(apiUrl('/api/v1/network/simulate'), {
+      const activePid = localStorage.getItem('te_active_project_id');
+      const pidParam = activePid ? `?project_id=${encodeURIComponent(activePid)}` : '';
+      await fetch(apiUrl(`/api/v1/network/simulate${pidParam}`), {
         method: 'POST',
         headers: { Authorization: `Bearer ${t}` }
       });

@@ -31,6 +31,11 @@ EVENT_SCAN_LIMIT = 100000
 
 
 def _project_ids(db: Session, user: models.User, project_id: Optional[int] = None) -> List[int]:
+    is_admin = bool(user and (user.role in ('SUPERADMIN', 'ADMIN') or user.email in ('admin@thirdeye.io', 'superadmin@thirdeye.io')))
+    if is_admin:
+        if project_id is not None:
+            return [project_id]
+        return [r[0] for r in db.query(models.Project.id).all()]
     q = db.query(models.Project.id).filter(models.Project.organization_id == user.organization_id)
     ids = [r[0] for r in q.all()]
     if project_id is not None:
